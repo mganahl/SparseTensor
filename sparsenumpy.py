@@ -514,7 +514,7 @@ def tensordot(tensor1,tensor2,inds,ignore_qflow=False):
     if not ignore_qflow:
         for l in range(len(inds[0])):
             if tensor1._qflow[inds[0][l]]!=tensor2.__flippedflow__()[inds[1][l]]:
-                warnings.warn('sparsenumpy.tensordot(tensor1,tensor2,inds): tensor1._qflow[{0}]!=tensor2._qflow[{1}]'.format(inds[0][l],inds[1][l]),stacklevel=2)
+                warnings.warn('sparsenumpy.tensordot(tensor1,tensor2,inds): tensor1._qflow[{0}]==tensor2._qflow[{1}]'.format(inds[0][l],inds[1][l]),stacklevel=2)
     assert(tensor1._dtype==tensor2._dtype)
     t2=tensor2#.__copy__()
     ind1=inds[0]
