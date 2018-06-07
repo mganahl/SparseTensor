@@ -17,4 +17,7 @@ Pure python/python3 library for supporting block sparse tensors with arbitrarily
   vectorization of SparseTensor for use in sparse solvers (might not be very fast)
   
 testCaseTensor.py does some unittest checks 
+
+The file tensordotprof.py runs a small profiling on the tensordot function. You can visualize the result using e.g. snakeviz
+It shows that for tensors with many small blocks, the overhead of python verus numpy.tensordot is large. When the blocksize gets larger than 50, the overhead becomes small and for 80 its negligible
   
