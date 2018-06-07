@@ -10,3 +10,5 @@ The library supports a bunch of operations on tensors (see sparsenumpy.py):
   qr decomposition
   vectorization of SparseTensor for use in sparse solvers (might not be very fast)
   
+testCaseTensor.py does some unittest checks 
+  
