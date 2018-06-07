@@ -32,8 +32,15 @@ parser = argparse.ArgumentParser('tensordotprof.py')
 parser.add_argument('--N', help='number of different quantum number sectors per leg (10)' ,type=int,default=10)
 parser.add_argument('--rank', help='tensor ranks' ,type=int,default=3)
 parser.add_argument('--dim', help='dimension of each quantum number sector on the legs (100)' ,type=int,default=100)
+parser.add_argument('--reps', help='number of repetitions of the tensordot contraction' ,type=int,default=1)
+parser.add_argument('--nlegs', help='number of legs to be contracted (rank)' ,type=int)
+
 args=parser.parse_args()
-        
+if args.nlegs==None:
+    nlegs=args.rank
+elif args.nlegs>args.rank:
+    print('cannot contract more than "rank" legs')
+    nlegs=args.rank
 rank=args.rank
 N=args.N
 dim=args.dim
@@ -50,6 +57,9 @@ for n in range(rank):
 
 a=spt.SparseTensor.random(I)
 b=spt.SparseTensor.random(I)
+
 inds=range(rank)
-reps=1
+nlegs=args.nlegs
+inds=random.sample(range(rank),nlegs)
+reps=args.reps
 cProfile.run('TensDotProf(a,b,inds,reps)','tensdotprof')
