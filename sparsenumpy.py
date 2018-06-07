@@ -293,49 +293,8 @@ def svd(tensor,indices1,indices2,defflow=1):
             V.__insertmergedblock__(Vkey,shape,blockv[:,slice(ykeys[ykey][0],ykeys[ykey][1],1)])
 
 
-    #d=0
-    #print('in svd(): keys and shapes of U')
-    #for k in U._tensor:
-    #    t=U._tensor[k]
-    #    print ('k=',k,'shape=',t.shape)
-    #    d+=utils.prod(t.shape)
-    #print ('in svd(): total number of elements of U: dim=',d)
-    #print ('in svd(): attemping to do tensordot(U,S,([1],[0]))')
-    #try:
-    #    tensordot(U,S,([1],[0]))
-    #    print ('success!')
-    #except ValueError:
-    #    print('failure!')
-    #    bla=input()
-    #print ('in svd(): splitting U indices')
     Usplit=splitSingle(U,0)
-    
-    #d=0
-    #print('in svd(): keys and shapes of Usplit')    
-    #for k in Usplit._tensor:
-    #    t=Usplit._tensor[k]
-    #    print ('k=',k,'shape=',t.shape)
-    #    d+=utils.prod(t.shape)
-    #print ('in svd(): total number of elements of Usplit: dim=',d)
-    #print('in svd(): keys and shapes of S')        
-    #for k in S._tensor:
-    #    t=S._tensor[k]
-    #    print ('k=',k,'shape=',t.shape)
-    #
-    #
-    #print ('in svd(): done with splitting U')
-    #print ('in svd(): attemping to do tensordot(Usplit,S,([Usplit._rank-1],[0]))')
-    #print (Usplit._rank)
-    #try:
-    #    tensordot(Usplit,S,([Usplit._rank-1],[0]))        
-    #    print ('success!')
-    #except ValueError:
-    #    print('failure!')
-    #    bla=input()
-    #print ('in svd(): splitting V:')
     Vsplit=splitSingle(V,1)
-    #print ('in svd(): done with splitting V')    
-    #print ('in svd(): leaving svd()')
     return Usplit,S,Vsplit
 
 
@@ -542,50 +501,6 @@ def transpose(tensor,newinds):
 
 
 
-###computes the contraction of tensor1 with tensor2 over the indices inds. The mergelevel of the tensors is respected and returned accordingly, i.e.
-####the resulting tensor can be split over the uncontracted indices, if they were merged indices in the first place.
-#def tensordot(tensor1,tensor2,inds):
-#    assert(tensor1._qsign==tensor2._qsign)
-#    assert(tensor1._dtype==tensor2._dtype)
-#    t2=tensor2.__copy__()
-#    ind1=inds[0]
-#    ind2=inds[1]
-#    cind1=sorted(list(set(range(len(tensor1._Ds))).difference(set(ind1))))
-#    cind2=sorted(list(set(range(len(tensor2._Ds))).difference(set(ind2))))
-#
-#    assert(len(ind1)==len(ind2))
-#    Ds=[]
-#    qflow=tuple([])
-#    mergelevel=tuple([])
-#    for i1 in cind1:
-#        Ds.append(dict())
-#        qflow+=tuple([tensor1._qflow[i1]])
-#        mergelevel+=tuple([tensor1._mergelevel[i1]])
-#    for i2 in cind2:
-#        Ds.append(dict())
-#        qflow+=tuple([tensor2._qflow[i2]])
-#        mergelevel+=tuple([tensor2._mergelevel[i2]])
-#
-#        
-#    result=spt.SparseTensor([],[],Ds,qflow,tensor1._qsign,mergelevel=mergelevel,dtype=tensor1._dtype)
-#    #print len(tensor1.__keys__())
-#    #print len(tensor2.__keys__())
-#    for k1 in tensor1.__keys__():
-#        k1reduced=[k1[m] for m in ind1]
-#        for k2 in t2._tensor.keys():
-#            k2reduced=[k2[n] for n in ind2]
-#            if k1reduced!=k2reduced:
-#                continue
-#
-#            newkey=tuple([k1[m] for m in cind1]+[k2[m] for m in cind2])
-#            newshape=tuple([tensor1._Ds[m][k1[m]] for m in cind1]+[t2._Ds[m][k2[m]] for m in cind2])            
-#            if newkey in result._tensor:
-#                result._tensor[newkey]+=np.tensordot(tensor1[k1],t2[k2],inds)
-#            elif newkey not in result._tensor:
-#                result.__insertmergedblock__(newkey,newshape,np.tensordot(tensor1[k1],t2[k2],inds))
-#
-#            
-#    return result
 
 
 
@@ -647,147 +562,6 @@ def tensordot(tensor1,tensor2,inds,ignore_qflow=False):
             
     return result
 
-
-##computes the contraction of tensor1 with tensor2 over the indices inds. The mergelevel of the tensors is respected and returned accordingly, i.e.
-###the resulting tensor can be split over the uncontracted indices, if they were merged indices in the first place.
-#def tensordot(tensor1,tensor2,inds):
-#    assert(tensor1._qsign==tensor2._qsign)
-#    assert(tensor1._dtype==tensor2._dtype)
-#    t2=tensor2.__copy__()
-#    ind1=inds[0]
-#    ind2=inds[1]
-#    cind1=sorted(list(set(range(len(tensor1._Ds))).difference(set(ind1))))
-#    cind2=sorted(list(set(range(len(tensor2._Ds))).difference(set(ind2))))
-#
-#    assert(len(ind1)==len(ind2))
-#    Ds=[]
-#    qflow=tuple([])
-#    mergelevel=tuple([])
-#    for i1 in cind1:
-#        Ds.append(dict())
-#        qflow+=tuple([tensor1._qflow[i1]])
-#        mergelevel+=tuple([tensor1._mergelevel[i1]])
-#    for i2 in cind2:
-#        Ds.append(dict())
-#        qflow+=tuple([tensor2._qflow[i2]])
-#        mergelevel+=tuple([tensor2._mergelevel[i2]])
-#
-#        
-#    result=spt.SparseTensor([],[],Ds,qflow,tensor1._qsign,mergelevel=mergelevel,dtype=tensor1._dtype)
-#    #print len(tensor1.__keys__())
-#    #print len(tensor2.__keys__())
-#    for k1 in tensor1.__keys__():
-#        k1reduced=tuple([k1[m] for m in ind1])
-#        for k2 in t2._tensor.keys():
-#            k2reduced=tuple([k2[n] for n in ind2])
-#            if k1reduced!=k2reduced:
-#                continue
-#
-#            newkey=tuple([k1[m] for m in cind1]+[k2[m] for m in cind2])
-#            newshape=tuple([tensor1._Ds[m][k1[m]] for m in cind1]+[t2._Ds[m][k2[m]] for m in cind2])            
-#            if newkey in result._tensor:
-#                result._tensor[newkey]+=np.tensordot(tensor1[k1],t2[k2],inds)
-#            elif newkey not in result._tensor:
-#                result.__insertmergedblock__(newkey,newshape,np.tensordot(tensor1[k1],t2[k2],inds))
-#
-#            
-#    return result
-#
-#computes the contraction of tensor1 with tensor2 over the indices inds. The mergelevel of the tensors is respected and returned accordingly, i.e.
-#the resulting tensor can be split over the uncontracted indices, if they were merged indices in the first place.
-#def tensordot(tensor1,tensor2,inds):
-#    assert(tensor1._qsign==tensor2._qsign)
-#    assert(tensor1._dtype==tensor2._dtype)
-#    print (len(tensor1.__keys__()),len(tensor2.__keys__()))
-#    ind1=inds[0]
-#    ind2=inds[1]
-#    assert(len(ind1)==len(ind2))    
-#    cind1=sorted(list(set(range(len(tensor1._Ds))).difference(set(ind1))))
-#    cind2=sorted(list(set(range(len(tensor2._Ds))).difference(set(ind2))))
-#
-#    t1=merge(transpose(tensor1,cind1+ind1),list(range(len(cind1))),list(range(len(cind1),len(cind1+ind1))))
-#    t2=merge(transpose(tensor2,ind2+cind2),list(range(len(ind2))),list(range(len(ind2),len(ind2+cind2))))
-#    if len(cind1)!=0 and len(cind2)!=0:
-#        Ds=[dict(),dict()]                
-#        qflow=tuple([t1._qflow[0],t2._qflow[1]])
-#        mergelevel=tuple([t1._mergelevel[0],t2._mergelevel[1]])
-#    elif len(cind1)==0 and len(cind2)!=0:
-#        Ds=[dict()]        
-#        qflow=tuple([t2._qflow[1]])
-#        mergelevel=tuple([t2._mergelevel[1]])
-#    elif len(cind1)!=0 and len(cind2)==0:
-#        Ds=[dict()]        
-#        qflow=tuple([t1._qflow[0]])
-#        mergelevel=tuple([t1._mergelevel[0]])
-#    elif len(cind1)==0 and len(cind2)==0:
-#        Ds=[]        
-#        qflow=tuple([])
-#        mergelevel=tuple([])
-#        
-#    result=spt.SparseTensor([],[],Ds,qflow,tensor1._qsign,mergelevel=mergelevel,dtype=tensor1._dtype)
-#    if len(cind1)!=0 and len(cind2)!=0:    
-#        for k1 in t1._tensor.keys():
-#            for k2 in t2._tensor.keys():
-#                if k1[1]!=k2[0]:
-#                    continue
-#                newkey=tuple([k1[0],k2[1]])
-#                newshape=tuple([t1._Ds[0][k1[0]],t2._Ds[1][k2[1]]])            
-#                if newkey in result._tensor:
-#                    result._tensor[newkey]+=np.dot(t1[k1],t2[k2])
-#                elif newkey not in result._tensor:
-#                    result.__insertmergedblock__(newkey,newshape,np.dot(t1[k1],t2[k2]))
-#    elif len(cind1)==0 and len(cind2)!=0:
-#        for k1 in t1._tensor.keys():
-#            for k2 in t2._tensor.keys():
-#                if k1[0]!=k2[0]:
-#                    continue
-#                newkey=tuple([k2[1]])
-#                newshape=tuple([t2._Ds[1][k2[1]]])            
-#                if newkey in result._tensor:
-#                    result._tensor[newkey]+=np.dot(t1[k1],t2[k2])
-#                elif newkey not in result._tensor:
-#                    result.__insertmergedblock__(newkey,newshape,np.dot(t1[k1],t2[k2]))
-#    elif len(cind1)!=0 and len(cind2)==0:                        
-#        for k1 in t1._tensor.keys():
-#            for k2 in t2._tensor.keys():
-#                if k1[1]!=k2[0]:
-#                    continue
-#                newkey=tuple([k1[0]])
-#                newshape=tuple([t1._Ds[0][k1[0]]])            
-#                if newkey in result._tensor:
-#                    result._tensor[newkey]+=np.dot(t1[k1],t2[k2])
-#                elif newkey not in result._tensor:
-#                    result.__insertmergedblock__(newkey,newshape,np.dot(t1[k1],t2[k2]))
-#    elif len(cind1)==0 and len(cind2)==0:    
-#        for k1 in t1._tensor.keys():
-#            for k2 in t2._tensor.keys():
-#                if k1[0]!=k2[0]:
-#                    continue
-#                newkey=tuple([])
-#                newshape=tuple([])            
-#                if newkey in result._tensor:
-#                    result._tensor[newkey]+=np.dot(t1[k1],t2[k2])
-#                elif newkey not in result._tensor:
-#                    result.__insertmergedblock__(newkey,newshape,np.dot(t1[k1],t2[k2]))
-#                
-#    if len(cind1)!=0 and len(cind2)!=0:
-#        if len(cind1)>1 and len(cind2)>1:
-#            r=split(result,[0,1])
-#        elif len(cind1)==1 and len(cind2)>1:
-#            r=split(result,[1])
-#        elif len(cind1)>1 and len(cind2)==1:
-#            r=split(result,[0])
-#        elif len(cind1)==1 and len(cind2)==1:
-#            r=result
-#            
-#    elif len(cind1)==0 and len(cind2)!=0:
-#        r=split(result,[0])
-#    elif len(cind1)!=0 and len(cind2)==0:
-#        r=split(result,[0])
-#    elif len(cind1)==0 and len(cind2)==0:
-#        r=result
-#
-#    return r
 
 #return result
 
@@ -976,9 +750,6 @@ def splitSingle(tensor,index):
 #the routine keeps at least the largest eigevalue in S
 def truncate(U,S,V,eps):
     #first normalize S
-    #print (S.__norm__())
-    #input()
-    #S.__normalize__()
     S/=S.__norm__()
     mx=S.__blockmax__()
     maxkey=list(mx.keys())[0]
@@ -1001,11 +772,7 @@ def truncate(U,S,V,eps):
             mat=np.diag(diag)
             S[k]=mat
         else:
-            #print ('###################################################################################################')
-            #print ('########################  removing a block {0} of with elemtent {1} in S ##########################'.format(k,dold))
-            #print ('###################################################################################################')
             remove.add(k[0])
-    #shapes=S.__shapes__()
     shapes=dict()
     for k in S.__keys__():
         shapes[k]=S[k].shape
@@ -1016,7 +783,6 @@ def truncate(U,S,V,eps):
         mat=np.ones((1,1)).astype(S._dtype)
         S[maxkey]=mat
     S/=S.__norm__()        
-    #S.__normalize__()        
 
     keys=list(U._tensor.keys())
     for uk in keys:
@@ -1049,26 +815,6 @@ def truncate(U,S,V,eps):
             slices=tuple(b)
             V._Ds[0][vk[0]]=shapes[sk][1]
             V._tensor[vk]=mat[slices]
-    #print ('in truncation(): attemping to do tensordot(U,S,([U._rank-1],[0]))')
-    #
-    #try:
-    #    tensordot(U,S,([U._rank-1],[0]))        
-    #    print ('success!')
-    #    print ('in truncation: keys of U:')
-    #    print (list(zip(U._tensor.keys(),map(np.shape,U._tensor.values()))))
-    #    print ('in truncation: keys of S:')
-    #    print (list(zip(S._tensor.keys(),map(np.shape,S._tensor.values())))) 
-    #           
-    #except ValueError:
-    #    print('failure!')        
-    #    print ('in truncation: keys of U:')
-    #    print (list(zip(U._tensor.keys(),map(np.shape,U._tensor.values()))))
-    #    print ('in truncation: keys of S:')
-    #    print (list(zip(S._tensor.keys(),map(np.shape,S._tensor.values())))) 
-    #
-    #    bla=input()
-
-            
 
     
 
