@@ -41,11 +41,9 @@ if args.nlegs==None:
 elif args.nlegs>args.rank:
     print('cannot contract more than "rank" legs')
     nlegs=args.rank
-<<<<<<< HEAD
 else:
     nlegs=args.nlegs
-=======
->>>>>>> master
+
 rank=args.rank
 N=args.N
 dim=args.dim
@@ -53,8 +51,6 @@ kd={}
 
 for k,d in zip(range(N),[dim]*N):
     kd[k]=d
-
-
 I=[]
 
 for n in range(rank):
@@ -62,12 +58,7 @@ for n in range(rank):
 
 a=spt.SparseTensor.random(I)
 b=spt.SparseTensor.random(I)
-<<<<<<< HEAD
 
-=======
-inds=range(rank)
-nlegs=args.nlegs
->>>>>>> master
 inds=random.sample(range(rank),nlegs)
 reps=args.reps
 cProfile.run('TensDotProf(a,b,inds,reps)','tensdotprof')

@@ -284,8 +284,8 @@ class SparseTensor(object):
 
         self._qflow=qflow
 
-        if list(self.__charge__().values())!=[0]*len(self.__keys__()):
-            sys.exit('SparseTensor.__init__(): the tensor does not obey U(1) conservation of charge')
+        #if list(self.__charge__().values())!=[0]*len(self.__keys__()):
+        #    sys.exit('SparseTensor.__init__(): the tensor does not obey U(1) conservation of charge')
         #self.__shapes__() stores shapes in self._shapes
         self._shapes=self.__shapes__()
 
