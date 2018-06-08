@@ -291,12 +291,6 @@ class SparseTensor(object):
 
 
     """
-    returns a copy of SparseTensor with an empty ._tensor dict(), that is other wise identical to self
-    """
-    def __empty__():
-        return SparseTensor(keys=[],values=[],Ds=self._Ds,qflow=self._qflow,mergelevel=self._mergelevel,dtype=self._dtype)
-
-    """
     returns an independent object SparseTensor that shares all dict() data with self. i.e., the tensor-blocks
     of self and the returned object are the same things (the same stuff in memory). Modification of one 
     also modifies the other.

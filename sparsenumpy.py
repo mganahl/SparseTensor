@@ -53,18 +53,6 @@ def buildTensor(tensor):
 
 
     
-def diagsqrt(diagmat):
-    out=matrix.Matrix([],diagmat._D1,diagmat._D2,diagmat._dtype)
-    for k in diagmat.__keys__():
-        out[k]=np.diag(np.sqrt(np.diag(diagmat[k])))
-    return out
-
-
-def diaginv(diagmat):
-    out=matrix.Matrix([],diagmat._D1,diagmat._D2,diagmat._dtype)
-    for k in diagmat.__keys__():
-        out[k]=np.diag(1.0/np.diag(diagmat[k]))
-    return out
 
 #D is a dict() containing key-shape pairs, both of which are possibly nested tuples that define the size of each block;
 #D could be e.g. obtained from a tensor by D=tensor._Ds[n]; this would give an identity matrix that could be contracted
