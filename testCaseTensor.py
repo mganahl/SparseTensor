@@ -14,7 +14,7 @@ import SparseTensor as spt
 import qutilities as utils
 import random
 import unittest
-
+import timeit
 #from keyclass import AbelianKey
 comm=lambda x,y:np.dot(x,y)-np.dot(y,x)
 anticomm=lambda x,y:np.dot(x,y)+np.dot(y,x)
@@ -27,26 +27,47 @@ class TensorInitTests(unittest.TestCase):
     def setUp(self):
         self.rank=4
         self.outind=random.sample(range(self.rank),1)[0]
-        I1=spt.TensorIndex({10:4,3:7,4:3,9:12},1)
-        I2=spt.TensorIndex({2:2,1:6,4:2,6:11},1)
-        I3=spt.TensorIndex({2:2,1:6,4:2,6:11},1)
-        I4=spt.TensorIndex({14:6,12:3,18:2,10:11,21:11},-1)                        
+
+        #I1=spt.TensorIndex.fromdict({10:4,3:7,4:3,9:12},1)
+        #I2=spt.TensorIndex.fromdict({(2,):2,(1,):6,(4,):2,(6,):11},1)
+        #I3=spt.TensorIndex.fromdict({2:2,1:6,4:2,6:11},1)
+        #I4=spt.TensorIndex.fromdict({14:6,12:3,18:2,10:11,21:11},-1)
+
+        #I1=spt.TensorIndex.fromlist([[10],[3],[4],[9]],[4,7,3,12],1,'1')
+        #I2=spt.TensorIndex.fromlist([[1],[1],[4],[6]],[2,6,2,11],1,'2')
+        #I3=spt.TensorIndex.fromlist([[2],[1],[4],[6]],[2,6,2,11],1,'3')
+        #I4=spt.TensorIndex.fromlist([[13],[12],[18],[10],[21]],[6,3,2,11,11],-1,'4')
+        
+        I1=spt.TensorIndex.fromlist([[10,0],[3,0],[4,0],[9,0]],[4,7,3,12],1,'bla')
+        I2=spt.TensorIndex.fromlist([[1,0],[1,0],[4,0],[6,0]],[2,6,2,11],1,'bla')
+        I3=spt.TensorIndex.fromlist([[2,0],[1,0],[4,0],[6,0]],[2,6,2,11],1,'hu')
+        I4=spt.TensorIndex.fromlist([[13,0],[12,0],[18,0],[10,0],[21,0]],[6,3,2,11,11],-1,4)
+
+        #I1=spt.TensorIndex.fromlist([np.asarray([10,0]),np.asarray([3,0]),np.asarray([4,0]),np.asarray([9,0])],[4,7,3,12],1,'bla')
+        #I2=spt.TensorIndex.fromlist([np.asarray([1,0]),np.asarray([1,0]),np.asarray([4,0]),np.asarray([6,0])],[2,6,2,11],1,'bla')
+        #I3=spt.TensorIndex.fromlist([np.asarray([2,0]),np.asarray([1,0]),np.asarray([4,0]),np.asarray([6,0])],[2,6,2,11],1,0)
+        #I4=spt.TensorIndex.fromlist([np.asarray([13,0]),np.asarray([12,0]),np.asarray([18,0]),np.asarray([10,0]),np.asarray([21,0])],[6,3,2,11,11],-1)
+        
+        #print(I1)
+        #print(I2)
+        #print(I3)
+        #print(I4)
+
         self.I=[I1,I2,I3,I4]
         self.eps=1E-10
         
     def test_random(self):
         ten=spt.SparseTensor.random(self.I)
+   
     def test_zeros(self):
         ten=spt.SparseTensor.zeros(self.I)
-        for t in ten._tensor.values():
-            self.assertTrue(np.linalg.norm(t)<self.eps)
+        for t in ten.tensors:
+           self.assertTrue(np.linalg.norm(t)<self.eps)
     def test_ones(self):
         ten=spt.SparseTensor.ones(self.I)
-        for t in ten._tensor.values():
+        for t in ten.tensors:
             self.assertTrue(np.linalg.norm(t-np.ones(t.shape).astype(t.dtype))<self.eps)
-
-
-
+   
     def test_random_like(self):
         ten=spt.SparseTensor.random(self.I)
         ten2=spt.SparseTensor.random_like(ten)
@@ -57,6 +78,68 @@ class TensorInitTests(unittest.TestCase):
         ten=spt.SparseTensor.zeros(self.I)
         ten2=spt.SparseTensor.zeros_like(ten)
         
+
+
+    def test_other(self):
+        #ten3=spt.SparseTensor.random(self.I,dtype=complex,conserve=False)
+        ten=spt.SparseTensor.random(self.I,dtype=complex)
+        ten3=spt.SparseTensor.random(self.I,dtype=complex,conserve=False)        
+        ten2=spt.SparseTensor.random_like(ten)
+
+        #ten.checkconsistency(1)
+        #ten2.checkconsistency(1)        
+        ten2.randomize()
+        q=ten.getQN(0)
+        print('conjugation test')
+        print(ten2[0][0,0,0,0])        
+        ten2.conj()
+        print(ten2[0][0,0,0,0])                
+        ten2.normalize()
+        print(ten2.norm())
+
+        #ten.insert([[10,0],[3,0],[4,0],[9,0]],np.random.rand(2,2,2,2))
+        #ten.insert(np.asarray([np.asarray([10,0]),np.asarray([3,0]),np.asarray([4,0]),np.asarray([9,0])]),np.random.rand(2,2,2,2))
+        #ten.checkconsistency(1)
+        #print(ten._QN.dtype)
+        print(len(ten))
+        ten.insert(q,np.random.random_sample(ten[0].shape))
+        print(ten.DataFrame)
+
+        ten.checkconsistency()
+        ten3.removeNonConserved()
+        print(ten3.charge())
+        ten3.T([0,2,1,3])
+        ten3.T([1,0,2,3])
+        #ten.insert([1,2,3,6],np.random.rand(2,2,2,2))
+        #print(ten._QN._hash)
+        #print(ten._QN._data[1,:].dtype)
+
+        eye=ten.eye(ten.Index(1))
+        random=ten.random([ten.Index(1).setflow(1),ten.Index(1).setflow(-1)],conserve=False)
+
+        print(random.trace())
+        print(eye.trace())        
+
+        ten2=ten.hermitian()
+        ten.herm()
+        #print(ten[0]==ten2[0])
+        ten2=ten.transpose()
+        ten.T()
+
+            
+        print(ten.shape)
+        #print(ten.checkconsistency())
+
+        dense=ten.todense()
+        ten.fromdense(dense)
+        print(dense.shape)
+        num=dense.shape[0]
+        for n in range(1,len(dense.shape)):
+            num*=dense.shape[n]
+            
+        print(dense[np.nonzero(dense!=0.0)].shape)
+        print(num)
+        #print(ten[0]==ten2[0])
 
 class TensorLinalgTests(unittest.TestCase):
     def setUp(self):
@@ -566,6 +649,6 @@ if __name__ == "__main__":
     suite3 = unittest.TestLoader().loadTestsFromTestCase(TestMatrixDecompositions)
 
     unittest.TextTestRunner(verbosity=2).run(suite0)    
-    unittest.TextTestRunner(verbosity=2).run(suite1)
-    unittest.TextTestRunner(verbosity=2).run(suite2)
-    unittest.TextTestRunner(verbosity=2).run(suite3)    
+    #unittest.TextTestRunner(verbosity=2).run(suite1)
+    #unittest.TextTestRunner(verbosity=2).run(suite2)
+    #unittest.TextTestRunner(verbosity=2).run(suite3)    

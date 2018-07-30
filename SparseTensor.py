@@ -1,11 +1,17 @@
 #!/usr/bin/env python
-#from __future__ import division 
+#from __future__ import division
+import timeit
+import collections
+import pandas as pd
 import numpy as np
+import operator
 import warnings,os
 import sys
 import operator as opr
-import qutilities as utils
-import operator
+import qutilities as qutils
+import utils as cutils
+import operator,time
+import functools as fct
 import copy
 try:
     snp=sys.modules['sparsenumpy']
@@ -18,6 +24,7 @@ def generate_binary_deferer(op_func):
     def deferer(cls, B, *args, **kwargs):
         return type(cls).__binary_operations__(cls, B, op_func, *args,**kwargs)
     return deferer
+
 def generate_in_place_binary_deferer(op_func):
     def deferer(cls, B, *args, **kwargs):
         return type(cls).__in_place_binary_operations__(cls, B, op_func, *args,**kwargs)
@@ -28,7 +35,147 @@ def generate_unary_deferer(op_func):
         return type(cls).__unary_operations__(cls, op_func, *args,**kwargs)
     return deferer
 
+def generate_in_place_unary_deferer(op_func):
+    def deferer(cls, *args, **kwargs):
+        return type(cls).__in_place_unary_operations__(cls, op_func, *args,**kwargs)
+    return deferer
+
+
+def addColumns(df,*x):
+    """
+    takes a data frame df and columns x=[column1,column2,...,]
+    and sums the columns of df
+    returns a Series
+    """
+    x_=df[x[0]]
+    for n in range(1,len(x)):
+        x_+=df[x[n]]
+    return x_
+
+
+class BookKeeper:
+    """
+    BookKeeper class handles th ebook-keeping of the quantum number blocks
+    """
+
+    def __init__(self,keys,blocks,labels,rank):
+        self.rank=rank
+        self._blocks=copy.deepcopy(blocks)
+        if np.all(labels!=None):
+            self._labels=copy.deepcopy(labels)
+            self._indices=list(range(rank))            
+        else:
+            self._labels=list(range(rank))
+            self._indices=list(range(rank))
+
+        if len(keys)>0:
+            self.dtype=type(keys[0][0])                 
+            self._data=np.empty((len(keys),self.rank),dtype=self.dtype)            
+            for m in range(len(keys)):
+                k=keys[m]
+                if len(k)!=self.rank:
+                    raise ValueError("BookKeeper.__init__(): one of the key-lengths is different from tensor rank")
+                for n in range(len(k)):
+                    if __debug__:
+                        if type(k[n])!=self.dtype:
+                            raise TypeError("in BookKeeper.__init__(): found type {0} for a key on leg {1}, which is different from previously found type {2}".format(type(k[n]),n,self._QN.dtype))
+                    self._data[m][n]=copy.deepcopy(k[n])
+        else:
+            self.dtype=np.ndarray #default type
+            self._data=np.empty((len(keys),self.rank),dtype=self.dtype)                        
         
+        
+    def update_hashes(self):
+        if np.issubdtype(self.dtype,np.dtype(int)):
+            self._hash=np.asarray([hash(np.array(self._data[n,:]).tostring()) for n in range(self._data.shape[0])])
+        elif (self.dtype==np.ndarray) or (self.dtype==tuple):
+            self._hash=np.asarray([hash(np.concatenate(self._data[n,:],axis=0).tostring()) for n in range(self._data.shape[0])])
+        else:
+            raise TypeError("BookKeeper.update_hashes(): unknown quantum number type {0}; use integer or ndarray.".format(self.dtype))
+        return self        
+
+    def drop_duplicates(self):
+        """
+        BookKeeper.drop_duplicates():
+        drops all tensors with duplicate quantum numbers
+        """
+        try:
+            unique,inds=np.unique(self._hash,return_index=True)
+        except AttributeError:
+            self.update__hashes()
+            unique,inds=np.unique(self._hash,return_index=True)            
+        self._data=self._data[inds,:]
+        temp=[self._blocks[k] for k in inds]
+        self._blocks=temp
+        self.update_hashes()
+        return self
+        
+    def __len__(self):
+        return len(self._blocks)
+    
+    @property
+    def blocks(self):
+        return self._blocks
+    
+    @property
+    def labels(self):
+        return self._labels
+    @labels.setter
+    def labels(self,labellist):
+        self._labels=labellist
+        return self
+
+    @property
+    def labelindices(self):
+        return self._indices
+    @labelindices.setter
+    def labelindices(self,indexlist):
+        self._indices=indexlist
+    
+    @property
+    def DataFrame(self):
+        return pd.DataFrame.from_records(data=self._data,columns=self.labels)
+    
+    def __str__(self):
+        print('')
+        print('BookKeeper')
+        print(self.DataFrame)
+        return ''
+    
+    def checkconsistency(self,verbose=0):    
+        """ checks if the tensor blocks have consistent shapes; if shapes are inconsistent raises an error"""
+        df=self.DataFrame
+        try:
+            for leg in range(self.rank):
+                try:
+                    for k,v in df.groupby(self.labels[leg],sort=False).groups.items():
+                        Ds=list(map(lambda x: np.shape(x)[leg],[self._blocks[index] for index in v.tolist()]))
+                        if not all(D==Ds[0] for D in Ds):
+                            raise ValueError("SparseTensor.checkconsistency found inconsistent block shapes for leg {0} and quantum number {1}".format(self.labels[leg],k))
+                except TypeError:
+                    df=df.applymap(tuple)
+                    for k,v in df.groupby(self.labels[leg],sort=False).groups.items():
+                        Ds=list(map(lambda x: np.shape(x)[leg],[self._blocks[index] for index in v.tolist()]))
+                        if not all(D==Ds[0] for D in Ds):
+                            raise ValueError("SparseTensor.checkconsistency found inconsistent block shapes for leg {0} and quantum number {1}".format(leg,k))
+            if df.shape[0]!=len(self._blocks):
+                raise ValueError("SparseTensor.checkconsistency(): number of tensor blocks is different from the number of rows in the dataframe")
+        except ValueError as error:
+            raise ValueError
+        else:
+            if verbose>0:
+                print('SparseTensor.checkconsistency: tensor is consistent')
+        
+
+class BookKeeperView(BookKeeper):
+    def __init__(data,blocks,labels,rank):
+        NotImplemented
+        self.rank=self.rank
+        self._data=data.view()
+        self._blocks=[t.view() for t in blocks]
+        self.labels=labels
+
+    
 """
 Tensor index is essentially a wrapper for a dict() and a flow; it stores all desired (quantum number,dimension) pairs on a tensor leg as (key,value) pairs. _flow is the flow direction of the leg
 A list of TensorIndex objects can be used to initialize a SparseTensor (see below); any type which suports arithmetic operations (+,-,*) can be used
@@ -36,16 +183,101 @@ as a quantum number, with the exception of tuple()
 """
 class TensorIndex(object):
     @classmethod
-    def fromlist(cls,Qs,Dims,flow):
-        d=dict()
-        d.update(zip(Qs,Dims))
-        return cls(d,flow)
-        
-    def __init__(self,dictionary,flow):
-        self._Q=dict()
-        self._flow=flow
-        self._Q.update(dictionary)
+    def fromlist(cls,quantumnumbers,dimensions,flow,label=None):
+        if all(map(np.isscalar,quantumnumbers)):
+            QNs=list(quantumnumbers)            
+        elif all(list(map(lambda x: not np.isscalar(x),quantumnumbers))):
+            QNs=list(map(np.asarray,quantumnumbers))
+        else:
+            raise TypeError("TensorIndex.fromlist(cls,dictionary,flow,label=None): quantum numbers have inconsistent types")
+        return cls(QNs,dimensions,flow,label)
+    
+    @classmethod
+    def fromdict(cls,dictionary,flow,label=None):
+        if all(map(np.isscalar,dictionary.keys())):
+            QNs=list(dictionary.keys())            
+        elif all(list(map(lambda x: not np.isscalar(x),dictionary.keys()))):
+            QNs=list(map(np.asarray,dictionary.keys()))
+        else:
+            raise TypeError("TensorIndex.fromdict(cls,dictionary,flow,label=None): quantum numbers have inconsistent types")
+
+        return cls(QNs,list(dictionary.values()),flow,label)
+
+    def __init__(self,quantumnumbers,dimensions,flow,label=None):
+        if __debug__:
+            if len(quantumnumbers)!=len(dimensions):
+                raise ValueError("TensorIndex.__init__: len(quantumnumbers)!=len(dimensions)")
+
+        try:
+            unique=dict(zip(quantumnumbers,dimensions))
+        except TypeError:
+            unique=dict(zip(map(tuple,quantumnumbers),dimensions))
+
+
+        if __debug__:
+            if len(unique)!=len(quantumnumbers):
+                warnings.warn("in TensorIndex.__init__: found some duplicate quantum numbers; duplicates have been removed")
+
+        if __debug__:
+            try:
+                mask=np.asarray(list(map(len,unique.keys())))==len(list(unique.keys())[0])
+                if not all(mask):
+                    raise ValueError("in TensorIndex.__init__: found quantum number keys of differing length {0}\n all quantum number have to have identical length".format(list(map(len,unique.keys()))))
+            except TypeError:
+                if not all(list(map(np.isscalar,unique.keys()))):
+                    raise TypeError("in TensorIndex.__init__: found quantum number keys of mixed type. all quantum numbers have to be either integers or iterables")
+        self._data=np.array(list(zip(map(np.asarray,unique.keys()),dimensions)),dtype=object)
             
+        self._flow=flow
+        self.label=label
+        
+    def __getitem__(self,n):
+        return self._data[n[0],n[1]]
+
+    def Q(self,n):
+        return self._data[n,0]
+    
+    def D(self,n):
+        return self._data[n,1]
+    
+    def __len__(self):
+        return self._data.shape[0]
+
+    def setflow(self,val):
+        if val==0:
+            raise ValueError("TensorIndex.flow: trying to set TensorIndex._flow to 0, use positive or negative integers only")
+        self._flow=np.sign(val)        
+        return self
+    
+    def rename(self,label):
+        self.label=label
+        return self
+    
+    @property
+    def flow(self):
+        return self._flow
+    
+    @flow.setter
+    def flow(self,val):
+        if val==0:
+            raise ValueError("TensorIndex.flow: trying to set TensorIndex._flow to 0, use positive or negative integers only")
+        self._flow=np.sign(val)        
+
+    @property
+    def shape(self):
+        return self._data.shape
+    
+    @property
+    def DataFrame(self):
+        return pd.DataFrame.from_records(data=self._data,columns=['qn','D'])
+    
+    def __str__(self):
+        print('')
+        print('TensorIndex, label={0}, flow={1}'.format(self.label,self.flow))
+        print(self.DataFrame)
+        return ''
+        
+        
 
 """    
 IMPORTANT NOTE
@@ -66,112 +298,206 @@ which of the tensor legs are inflowing (1) and which are outflowing (-1).
 """
 
 class SparseTensor(object):
-    """
-    initializes the tensors with fun; indices are a list of TensorIndec objects carrying the relevant information 
-    to initialize the tensor
-    """
+
+    #_df=pd.DataFrame()  #a static dataframe shared by all SparseTensor objects to facilitate book-keeping
     @classmethod
-    def numpy_initializer(cls,fun,indices,dtype,*args,**kwargs):
+    def numpy_initializer(cls,fun,indices,dtype,conserve,ktoq=None,*args,**kwargs):
+        """
+        initializes the tensors with fun; indices are a list of TensorIndex objects carrying the relevant information 
+        to initialize the tensor; 
+        Parameters:
+        ----------------------------------
+        fun: function for initialization
+             signature of fun isL fun(shape,*args,**kwargs), where shape is a tuple of integers
+             could be np.zeros , np.random.random_sample, np.ones, ...
+        indices:  list containing TensorIndex objects:
+                  the indices of the tensor. indices[n] holds the quantum-number to bond-dimension mapping for leg n
+        dtype:  numpy.dtype of {bool,int,float,complex}
+                the dtype of the tensor elements
+        conserve: bool
+                  if True, function only keeps tensors which have a total charge of zero
+                  if False, all possible blocks are constructed from indice; note that this can generate large tensors with many blocks
+        """
         keys=[]
         shapes=[]
-        utils.getKeyShapePairs(n=0,indices=indices,keylist=keys,shapelist=shapes,key=[],shape=[])
+        qutils.getKeyShapePairs(n=0,indices=indices,keylist=keys,shapelist=shapes,key=[],shape=[],conserve=conserve)
+        labels=[I.label for I in indices]
+        uniquelabels=[]
+        suffix={}
+        for l in labels:
+            if l==None:
+                if len(uniqueintlabels)==0:
+                    l=0
+                else:
+                    l=max(uniqueintlabels)+1
+                uniqueintlabels.append(l)
+                
+            if l not in uniquelabels:
+                uniquelabels.append(l)
+            else:
+                warnings.warn("numpy_initializer found duplicate labels for the tensor legs; renaming duplicates")                
+                if isinstance(l,str):                
+                    if l in suffix:
+                        renamed=l+'_{0}'.format(suffix[l]+1)
+                        suffix[l]+=1
+                    else:
+                        renamed=l+'_{0}'.format(1)
+                        suffix[l]=1                                                
+                    uniquelabels.append(renamed)                                        
+                elif isinstance(l,int) or isinstance(l,np.int64)or isinstance(l,np.int32):
+                    while l in uniquelabels:
+                        l+=1
+                    uniquelabels.append(l)
+                else:
+                    raise TypeError("in SparseTensor.numpy_initializer: unknown label type for tensor legs; allowed types are int or str")
+
+        values=[fun(shape,*args,**kwargs).astype(dtype) for shape in shapes]                
+        if __debug__:
+            if len(keys)==0:
+                warnings.warn("no keys provided for SparseTensor.numpy_initializer(cls,fun,indices,dtype,*args,**kwargs)",stacklevel=3)
+            if len(keys)!=len(values):
+                raise ValueError("in classmethod SparseTensor.numpy_initializer(cls,fun,indices,dtype,*args,**kwargs): len(keys)!=len(values)")
+        qflow= np.asarray([I._flow for I in indices])
+        #return cls(keys,values,qflow,dtype=dtype,keytoq=ktoq,defval=0,labels=labels)
+        out=cls()
+        if dtype==np.bool:
+            out._defval=False
+        elif np.issubdtype(dtype,np.dtype(int)):
+            out._defval=np.int64(0)
+        elif np.issubdtype(dtype,np.dtype(float)) :           
+            out._defval=np.float64(0)            
+        elif np.issubdtype(dtype,np.dtype(complex)) :                       
+            out._defval=np.complex128(0)
+            
+        out._dtype=dtype
+        out._QN=BookKeeper(keys=keys,blocks=values,labels=uniquelabels,rank=len(qflow))
+        out._QN.update_hashes()
+        if len(keys)>0:
+            out.drop_duplicates()
+        out.qflow= np.asarray([I._flow for I in indices])
+        out._ktoq=ktoq
+        return  out
+
+
+    @classmethod
+    def eye(cls,index,qflow=[1,-1],dtype=np.float64,*args,**kwargs):
         
-        #keylist and shapelist contain the key and shape tuples allowed by the symmetry
-        if len(keys)==0:
-            warnings.warn("no keys provided for SparseTensor.numpy_initializer(cls,fun,indices,dtype,*args,**kwargs)",stacklevel=3)
-        values=[]
-        for shape in shapes:
-            values.append(fun(shape,*args,**kwargs).astype(dtype))
-        qflow=tuple([])
-        for I in indices:
-            qflow+=tuple([I._flow])
+        """
+        Initialize a eye-matrix from a TensorIndex object index
+        SparseTensor.eye(I) creates an rank-2 tensor with identities
+        """
+        i1=copy.deepcopy(index)
 
-        return cls.fromblocks(keys=keys,values=values,qflow=qflow)
+        i1._flow=qflow[0]
+        index._flow=qflow[1]
+        iden=cls.numpy_initializer(np.empty,[i1,index],dtype,conserve=True,*args,**kwargs)
+        for n in range(len(iden)):
+            iden.tensors[n]=np.eye(iden.tensors[n].shape[0])
+            
+        return iden
 
-    @classmethod
-    def tensor_initializer(cls,tensor,fun,*args,**kwargs):
-        cls=tensor.__copy__()
-
-        for k,v in cls._tensor.items():
-            cls[k]=fun(v.shape,*args,**kwargs).astype(cls._dtype)
-        return cls
     
-    """
-    Initialize a random tensor from a list of TensorIndex objects:
-    SparseTensor.random([I1,I2,...,IN]) creates an rank-N tensor 
-    with block initialized according to I1,...,IN
-    """
     @classmethod
-    def random(cls,indices,dtype=float,*args,**kwargs):
-        return cls.numpy_initializer(np.random.random_sample,indices,dtype,*args,**kwargs)
-    """
-    Initialize a tensor of zeros from a list of TensorIndex objects
-    SparseTensor.zeros([I1,I2,...,IN]) creates an rank-N tensor 
-    with block initialized according to I1,...,IN
-
-    """
+    def random(cls,indices,dtype=np.float64,conserve=True,*args,**kwargs):
+        """
+        Initialize a random tensor from a list of TensorIndex objects:
+        SparseTensor.random([I1,I2,...,IN]) creates an rank-N tensor 
+        with block initialized according to I1,...,IN
+        """
+        
+        return cls.numpy_initializer(np.random.random_sample,indices,dtype,conserve,*args,**kwargs)
+    
     @classmethod
-    def zeros(cls,indices,dtype=float,*args,**kwargs):
-        return cls.numpy_initializer(np.zeros,indices,dtype,*args,**kwargs)        
-    """
-    Initialize a tensor of ones from a list of TensorIndex objects
-    SparseTensor.ones([I1,I2,...,IN]) creates an rank-N tensor 
-    with block initialized according to I1,...,IN
-    """
+    def zeros(cls,indices,dtype=np.float64,conserve=True,*args,**kwargs):
+        """
+        Initialize a tensor of zeros from a list of TensorIndex objects
+        SparseTensor.zeros([I1,I2,...,IN]) creates an rank-N tensor 
+        with block initialized according to I1,...,IN
+        """
+        return cls.numpy_initializer(np.zeros,indices,dtype,conserve,*args,**kwargs)
+   
     @classmethod
-    def ones(cls,indices,dtype=float,*args,**kwargs):
-        return cls.numpy_initializer(np.ones,indices,dtype,*args,**kwargs)        
-    """
-    Initialize a tensor of empty from a list of TensorIndex objects
-    SparseTensor.empty([I1,I2,...,IN]) creates an rank-N tensor 
-    with block initialized according to I1,...,IN
-    """
+    def ones(cls,indices,dtype=np.float64,conserve=True,*args,**kwargs):
+        """
+        Initialize a tensor of ones from a list of TensorIndex objects
+        SparseTensor.ones([I1,I2,...,IN]) creates an rank-N tensor 
+        with block initialized according to I1,...,IN
+        """
+        return cls.numpy_initializer(np.ones,indices,dtype,conserve,*args,**kwargs)
+    
     @classmethod
-    def empty(cls,indices,dtype=float,*args,**kwargs):
-        return cls.numpy_initializer(np.empty,indices,dtype,*args,**kwargs)        
-
+    def empty(cls,indices,dtype=np.float64,conserve=True,*args,**kwargs):
+        """
+        Initialize a tensor of empty form from a list of TensorIndex objects
+        SparseTensor.empty([I1,I2,...,IN]) creates an rank-N tensor 
+        with block of sizes according to I1,...,IN, but all uninitialized (see numpy.empty)
+        """
+        return cls.numpy_initializer(np.empty,indices,dtype,conserve,*args,**kwargs)
+    
     @classmethod
+    def tensor_initializer(cls,fun,tensor,*args,**kwargs):    
+        """
+        SparseTensor.tensor_initializer(fun,tensor,*args,**kwargs):    
+        initialize a new tensor with identical properties as "tensor",  but blocks initialized with 
+        fun
+        """
+        keys=[tensor.getQN(n) for n in range(len(tensor))]
+        values=[fun(np.shape(t),*args,**kwargs).astype(tensor.dtype) for t in tensor.tensors]
+        #return cls.numpy_initializer(np.random.random_sample,Indices,tensor.dtype,*args,**kwargs)
+        return cls(keys,values,tensor.qflow,labels=tensor.labels,dtype=tensor.dtype)
+    
+    @classmethod    
     def random_like(cls,tensor,*args,**kwargs):
-        return cls.tensor_initializer(tensor,np.random.random_sample,*args,**kwargs)
-
+        """
+        returns a new tensor with the same rank, qflow and dataframe as tensors, but
+        tensor block initialized randomly
+        """
+        #return cls.numpy_initializer(np.random.random_sample,Indices,tensor.dtype,*args,**kwargs)
+        return cls.tensor_initializer(np.random.random_sample,tensor)
+    
     @classmethod
     def zeros_like(cls,tensor,*args,**kwargs):
-        return cls.tensor_initializer(tensor,np.zeros,*args,**kwargs) 
+        """
+        returns a new tensor with the same rank, qflow and blokc-data as tensors, but
+        tensor block initialized with zeros
+        """
 
+        #Indices=[tensor.Index(n) for n in range(tensor.rank)]
+        #return cls.numpy_initializer(np.zeros,Indices,tensor.dtype,*args,**kwargs)
+        return cls.tensor_initializer(np.zeros,tensor)        
     @classmethod
     def ones_like(cls,tensor,*args,**kwargs):
-        return cls.tensor_initializer(tensor,np.ones,*args,**kwargs) 
+        """
+        returns a new tensor with the same rank, qflow and blokc-data as tensors, but
+        tensor block initialized with ones
+        """
+
+        #Indices=[tensor.Index(n) for n in range(tensor.rank)]
+        #return cls.numpy_initializer(np.ones,Indices,tensor.dtype,*args,**kwargs)
+        return cls.tensor_initializer(np.ones,tensor)        
 
     @classmethod
     def empty_like(cls,tensor,*args,**kwargs):
-        return cls.tensor_initializer(tensor,np.empty,*args,**kwargs) 
-
+        """
+        returns a new tensor with the same rank, qflow and blokc-data as tensors, but
+        tensor block not initialized  (see numpy.empty)
+        """
+        #Indices=[tensor.Index(n) for n in range(tensor.rank)]
+        #return cls.numpy_initializer(np.empty,Indices,tensor.dtype,*args,**kwargs)
+        return cls.tensor_initializer(np.empty,tensor)        
     
-    """
-    Initializes a tensor from a list of keys and values; see below for explanation of qflow
-    """
     @classmethod
-    def fromblocks(cls,keys,values,qflow):
-        if len(values)>0:
-            if values[0].dtype==np.complex128:
-                dtype=complex
-            elif values[0].dtype==np.float64:
-                dtype=float
-            else:
-                sys.exit("in SparseTensor.fromblocks: unknown value type")
-                
+    def fromblocks(cls,keys,values,qflow,dtype=np.float64,labels=None):
+        """
+        @classmethod
+        fromblocks(keys,values,qflow):
+        Initializes a tensor from a list of keys and values with given qflow
+        """
         if len(keys)==0:
-            sys.exit("in classmethod SparseTensor.fromblocks(keys,values): len(keys)=0; please enter list of length>0")
+            warnings.warn('in classmethod SparseTensor.fromblocks(keys,values): initializing empty tensor')
         if len(keys)!=len(values):
-            sys.exit("in classmethod SparseTensor.fromblocks(keys,values): len(keys)!=len(values)")
-        return cls(keys=keys,values=values,Ds=[dict() for n in range(len(keys[0]))],qflow=qflow,mergelevel=None,dtype=dtype,keytoq=None,defval=0.0)
-
-    """
-    Initializes an empty tensor; see below for explanation of qflow
-    """
-    @classmethod
-    def empty(cls,rank,qflow,dtype=float):
-        return cls(keys=[],values=[],Ds=[dict() for n in range(rank)],qflow=qflow,mergelevel=None,dtype=dtype,keytoq=None,defval=0.0)
+            raise ValueError("in classmethod SparseTensor.fromblocks(keys,values): len(keys)!=len(values)")
+        return cls(keys,values,qflow,dtype=dtype,keytoq=None,defval=0.0,labels=labels)
         
     """
     keys:  
@@ -184,9 +510,6 @@ class SparseTensor(object):
     values: 
     a list of length N of mapped values, usually of type ndarray. If other types are given, they should implement member functions 
     so that they can be called with np.reshape and np.tensordot.
-
-    Ds: 
-    a list of length N of dict()'s. Each dict() Ds[n] maps a set of keys of leg n into the dimension of the corresponding block.
 
     qflow: 
     a tuple of length len(Ds) of numbers that defines flow-directions of the legs of the tensor. for a positive element 
@@ -209,437 +532,612 @@ class SparseTensor(object):
     quantum numbers in such a way that such degeneracies are automatically taken care of. It is however convenient to have this 
     feature in order to use keys that do not directly implement __add__ and __sub__ methods (for example strings).
 
-    mergelevel: 
-    tuple of len(Ds) containing strings 'A'. If the tensorlegs have been merged, mergelevel is a nested tuple 
-    reflecting the way the tensors were merged. if mergelevel=None, a tensor with a trivial mergestructure is created.
-
     dtype: 
     data type of the underlying ndarray: can be float or complex
 
     defval: 
     the default value of the tensor outside of the blocks (0.0 per default)
 
-
-    self._tensor:
-    dict() mapping charge quantum numbers to ndarrays.
-    The charge quantum numbers are (nested) tuples of whatever the user provides.
-
-    self._shapes:
-    a dict() mapping the different U(1) charge sectors of the tensor to the shapes of the tensors;
-    shapes maps nested tuples of U(1) charge values to nested tuples of integers, corresponding to the shape 
-    of the tensors. For example, a key-value pair ((1,2),3), ((10,11),200) corresponds to a matrix of shape
-    (110,200) with U(1) charge 3 on one leg and 3 on the other. if qflow=((1,1),-1) the total charge is in this case 0).
-
-
-    self._keys:
-    list() of length self._rank (tensor-rank) of dict(); each dict() in self._keys[n] is a map which maps charge-keys
-    on leg n to a list of tensor-keys with this specific value of charge on leg n. For example, self._keys[2] 
-    is a dictionary of the form 
-    {
-       ((1,4),4):[(1,3,((1,4),4),5,9),(3,5,((1,4),4),5,6),...], 
-       ((3,8),0):[(1,9,((3,8),0),9,9),(15,4,((3,8),0),59,1),...]
-       .
-       .
-       .
-    }
-    This is convenient for quickly finding all blocks that have a given quantum number on a given leg.
     """
-    
-    def __init__(self,keys,values,Ds,qflow,mergelevel=None,dtype=float,keytoq=None,defval=0.0):
-        self._defval=dtype(defval)
-        self._Ds=[dict() for n in range(len(Ds))]
-        self._rank=len(self._Ds)
-        #keytoq is a list that for each leg of the tensor contains either None or a dict(). If indextoq[n]=None, it means that
-        #the quantum number of leg n is already the key. If its a dict(), the dict has to map the keys of leg n to a quantum number
-        #such that it is identical to the quantum number types used on the other legs
-        if keytoq==None:
-            self._ktoq=tuple(list([None])*self._rank)
-        else:
-            self._ktoq=tuple(keytoq)
-
-        for n in range(len(Ds)):
-            self._Ds[n]=copy.deepcopy(Ds[n])
-        #the datatype of the tensor
-        self._dtype=dtype
-        #the blocks are stored in a dictionary (hash-table)
-        #on initialization, create a list of dictionaries for each index; the dict maps each existing QN of the index to a list of tensor-keys, i.e. given a key k=0 in index n,
-        self._tensor=dict()
-
-        #self._key[n][k]=list() of all tensor-keys with with a value of k on the n-th index; 
-        #this is useful for e.g. summations over a given index
-        self._keys=[dict() for n in range(self._rank)]
-
-        #this gives information about how nested the merged indices are. 0 means not nested at all (unmerged).
-        if mergelevel==None:
-            #self._mergelevel=tuple(range(self._rank))
-            self._mergelevel=tuple(list('A')*self._rank)
-        else:
-            self._mergelevel=mergelevel
-
-        #self._shapes is a dictionary that will contain the merged shape (i.e. a nested tuple()) of a block with a certain key
-        self._shapes=dict()
-        #insert values into the dict        
-        for n in range(len(keys)):
-            self[keys[n]]=values[n]
-
-        self._qflow=qflow
-
-        if list(self.__charge__().values())!=[0]*len(self.__keys__()):
-            sys.exit('SparseTensor.__init__(): the tensor does not obey U(1) conservation of charge')
-        #self.__shapes__() stores shapes in self._shapes
-        self._shapes=self.__shapes__()
-
-
-    """
-    returns an independent object SparseTensor that shares all dict() data with self. i.e., the tensor-blocks
-    of self and the returned object are the same things (the same stuff in memory). Modification of one 
-    also modifies the other.
-    """
-    def __view__(self):
-        view=SparseTensor(keys=[],values=[],Ds=self._Ds,qflow=self._qflow,mergelevel=self._mergelevel,dtype=self._dtype)
-        view._Ds=self._Ds.copy()
-        view._keys=self._keys.copy()
-        view._tensor=self._tensor.copy()
-        view._ktoq=self._ktoq
-        view._shapes=self._shapes.copy()
-
-        
-    """flips the flow direction of all tensor legs"""
-    def __flipflow__(self):
-        self._qflow=utils.flipsigns(self._qflow)
-        return self
-
-    """flips the flow direction of all tensor legs"""
-    def __flippedflow__(self):
-        return utils.flipsigns(self._qflow)
-    
-    
-    """return a tuple of the tensor-dimension (similar to ndarray.shape)"""
-    def __dims__(self):
-        d=[]
-        for n in range(self._rank):
-            d.append(self.__dim__(n))
-        return tuple(d)
-
-    """returns the dimension of leg index"""
-    def __dim__(self,index):
-        dim=0
-        for val in self._Ds[index].values():
-            dim+=utils.prod(utils.flatten(val))
-        return dim
-    
-    """returns a dict() of the total charge of each block; for a symmetric tensor, each charge should be zero"""
-    def __charge__(self):
-        charge=dict()
-        flow=utils.flatten(self._qflow)
-        for key in self.__keys__():
-            #kflat=utils.tupsignmult(utils.flatten(key),utils.flatten(self._qflow))            
-            #q=sum(kflat[1::],kflat[0])            
+    def __init__(self,*args,dtype=np.float64,keytoq=None,defval=0.0,labels=None):
+        if len(args)>0:
+            keys=args[0]
+            values=args[1]
+            qflow=args[2]
+            if dtype==np.bool:
+                self._defval=np.bool(defval)
+            elif np.issubdtype(dtype,np.dtype(int)):
+                self._defval=np.int64(defval)
+            elif np.issubdtype(dtype,np.dtype(float)) :           
+                self._defval=np.float64(defval)            
+            elif np.issubdtype(dtype,np.dtype(complex)) :                       
+                self._defval=np.complex128(defval)
+            if __debug__:
+                if len(keys)!=len(values):
+                    raise ValueError("SparseTensor.__init__(): length of key-list is different from length of block-list")
+                
             
-            k=utils.flatten(key)
-            if self._ktoq[0]==None:
-                q=k[0]*np.sign(flow[0])                
+            #the datatype of the tensor            
+            self._dtype=dtype            
+            #keytoq is a list that for each leg of the tensor contains either None or a dict(). If indextoq[n]=None, it means that
+            #the quantum number of leg n is already the key. If its a dict(), the dict has to map the keys of leg n to a quantum number
+            #such that it is identical to the quantum number types used on the other legs
+            if keytoq==None:
+                self._ktoq=tuple(list([None])*len(qflow))
             else:
-                q=self._ktoq[0][k[0]]*np.sign(flow[0])                
-            for n in range(1,len(k)):
-                if self._ktoq[n]==None:
-                    q+=k[n]*np.sign(flow[n])
-                else:
-                    q+=self._ktoq[n][k[n]]*np.sign(flow[n])                    
-            charge[key]=q
-        return charge
-    
-    #returns a dict() with the shape of each block
-    def __shapes__(self):
-        shapes=dict()
-        for k in self.__keys__():
-            shape=[]
-            for n in range(self._rank):
-                shape.append(self._Ds[n][k[n]])
-            shapes[k]=shape
-        self._shapes=shapes
-        return shapes
-
-    #randomizes the tensor
-    def __randomize__(self,scaling=0.5):
-        for k in self.__keys__():
-            shape=self[k].shape
-            if self._dtype==float:
-                self._tensor[k]=(np.random.random_sample(shape)-0.5)*scaling
-            elif self._dtype==complex:
-                self._tensor[k]=(np.random.random_sample(shape)-0.5+1j*(np.random.random_sample(shape)-0.5))*scaling
-        return self
-    
-    #sets all values to 0
-    def __zero__(self):
-        for k in self.__keys__():
-            shape=self[k].shape
-            self._tensor[k]=np.zeros(shape).astype(self._dtype)
-        return self
-    
-    #adds a single key to self._keys
-    def __addkey__(self,key):
-        try:
-            assert(len(key)==self._rank)
-        except AssertionError:
-            sys.exit('SparseTensor.__addkey__(key): len(key)!=self._rank')
-        for n in range(self._rank):
-            if key[n] not in self._keys[n]:
-                self._keys[n][key[n]]=[key]
-            elif key[n] in self._keys[n]:
-                if key not in self._keys[n][key[n]]:
-                    self._keys[n][key[n]].append(key)
-
-    #resets self._keys and fills in values consistent with the current self._tensor
-    def __updatekeys__(self):
-        self._keys=[dict() for n in range(self._rank)]
-        for key in self._tensor.keys():
-            self.__addkey__(key)
-
-    #return a dict_view of all keys on index
-    def __getkeys__(self,index):
-        return self._keys[index]
-    
-    def __getitem__(self,ind):
-        return self._tensor[ind]
-
-    #inserts "value" into the class (not copied), and updates _Ds and _keys according to key and shape
-    #shape and key are both (nested) tuples that define the shape and the quantum number of "value".
-    #Note that for nested tuples, like e.g. shape=((2,3),(2,(3,4)),5), the tensor shape has to be value.shape=(6,24,5); 
-    #this is currently not checked and the user has thus to provide the correct tensor. Inserting a wrong size may brake the code
-    #at any point
-    def __insertmergedblock__(self,key,shape,value):
-        try:
-            assert(len(key)==len(shape))
-            assert(len(key)==self._rank)
-
-        except AssertionError:
-            sys.exit('in SparseTensor.__insertmergedblock__(self,key,shape,value): an one of the following assertions failed: (1) assert(len(key)==len(shape)); (2) assert(len(key)==self._rank)')            
-
-        #self._tensor[key]=np.copy(value)
-        self._tensor[key]=value
-        self.__addkey__(key)
-        self._shapes[key]=shape
-        for n in range(len(key)):
-            self.__insertshape__(key[n],shape[n],n)
-
-    #updates self._Ds[index] using key and shape
-    def __insertshape__(self,key,shape,index):
-        #assert(len(key)==len(shape))
-        if key in self._Ds[index].keys():
-            del self._Ds[index][key]
-            self._Ds[index][key]=shape            
-        elif key not in self._Ds[index].keys():
-            self._Ds[index][key]=shape
+                self._ktoq=tuple(keytoq)
             
-    #inserts a reference of "value" at "key"; the "key" is added to the self._keys list, self._Ds is updated according to value.shape
-    #this function only works for tensor with a trivial mergelevel, i.e. self._mergelevel=['A']*self._rank; 
-    #for merged tensors, use __insertmergedblock__ instead
-    def __setitem__(self,key,value):
-        assert(self._mergelevel==tuple(['A']*self._rank))
-        for n in range(self._rank):
-            if key[n] in self._Ds[n]:
-                try :
-                    assert(utils.prod(utils.flatten(self._Ds[n][key[n]]))==value.shape[n])
-                except AssertionError:
-                    print (n,'key=',key,'dim of k[',n,']=',utils.prod(utils.flatten(self._Ds[n][key[n]])),'value.shape: ',value.shape)
-                    sys.exit('SparseTensor.__setitem__(key,value): value.shape not consistent with existing blocks')
-            elif key[n] not in self._Ds[n]:
-                self._Ds[n][key[n]]=value.shape[n]
+            #the block-labels are stored in BookKeeper class in an ndarray
+            #each column labels a different feature of the tensor:
+            #e.g.: q1,q2,...,qN are quantum numbers for each leg 1,..,N
+            #BookKeeper also hold the tensor blocks and labels of the legs
+            self._QN=BookKeeper(keys=keys,blocks=values,labels=labels,rank=len(qflow))
+            self._QN.update_hashes()
+            if len(keys)>0:
+                self.drop_duplicates()
+            self.qflow=np.asarray(qflow)
 
-        #self._tensor[key]=np.copy(value)
-        self._tensor[key]=value
-        self._shapes[key]=value.shape
-        self.__addkey__(key)
-
-    #remove a key from the tensor
-    def __remove__(self,key):
-        #first remove the tensor from the dictionary
-        if key in self._tensor:
-            del self._tensor[key]
-        if key in self._shapes:            
-            del self._shapes[key]
-        #now update self._keys and self._Ds:
-        for n in range(len(self._keys)):
-            if key in self._keys[n][key[n]]:
-                self._keys[n][key[n]].remove(key)
-                #if key was the only key with a quantum number key[n] on index n, then remove (key[n],self._keys[n]) from the dictionary at index n
-                #also remove the corresponding entry in (key[n],self._Ds[n][key[n]]), which gives the bond-dimension of all blocks with quantum number key[n] at index n
-                #since key was the only entry with a quantum number key[n] at index n, it has to be removed from self._Ds[n]
-                if len(self._keys[n][key[n]])==0:
-                    del self._Ds[n][key[n]]
-                    del self._keys[n][key[n]]
+       
+    def Index(self,leg,from_labels=False):
+        """
+        Index(leg,from_labels=False):
+        returns an TensorIndex object corresponding to leg "leg" of the SparseTensor
+        leg (int, or element in SparseTensor.labels if from_labels=True): the leg for which the TensorIndex object should be constructed
+        """
         
-    #removes all blocks with a total norm smaller then thresh/D**rank
-    def __squeeze__(self,thresh=1E-14):
-        toberemoved=list()
-        for k in self._tensor.keys():
-            if np.linalg.norm(self[k])/utils.prod(utils.flatten(self[k].shape))<thresh:
-                toberemoved.append(k)
-        for k in toberemoved:
-            self.__remove__(k)
+        quantumnumbers,dimensions=self.blockdims(leg,from_labels)
+        if (from_labels==True):
+            if(any([l==leg for l in self.labels])):
+                index=np.nonzero(np.asarray(self.labels,dtype=object)==leg)[0][0]            
+            else:
+                raise ValueError("in SparseTensor.Index(leg,from_labels=False): label {0} not found in SparseTensor.labels".format(leg))
+
+            return TensorIndex(quantumnumbers,dimensions,self.qflow[index],self.labels[index])                        
+        else:
+            if not np.issubdtype(type(leg),np.dtype(int)):
+                raise TypeError("SparseTensor.Index(leg,from_labels=False): type(leg)={0} is not of integer type".format(type(leg)))
+            if leg>=self.rank:
+                raise ValueError("in SparseTensor.Index(leg,from_labels=False): leg>=self.rank")
+            return TensorIndex(quantumnumbers,dimensions,self.qflow[leg],self.labels[leg])                        
+        
+    @property
+    def tensors(self):
+        return self._QN.blocks
+
+    @tensors.setter
+    def tensors(self,newlist):
+        self._QN._blocks=newlist
+
+    @property
+    def labels(self):
+        return self._QN.labels
+    @labels.setter
+    def labels(self,labellist):
+        self._QN.labels=labellist
+        return self
+
+
+    @property
+    def labelindices(self):
+        return self._QN.labelindices
+    
+    @labelindices.setter
+    def labelindices(self,indexlist):
+        self._QN.labelindices=indexlist
         return self
     
+    
+    @property
+    def defval(self):
+        return self._defval
+    @property
+    def ktoq(self):
+        return self._ktoq
+    
+    @property
+    def DataFrame(self):
+        return pd.DataFrame.from_records(data=self._QN._data,columns=self._QN.labels)
+    
+    @property
+    def dtype(self):
+        return self._dtype
+    @property
+    def rank(self):
+        return self._QN.rank
+    
+    def drop_duplicates(self):
+        """
+        SparseTensor.drop_duplicates():
+        drops all tensors with duplicate quantum numbers
+        """
+        self._QN.drop_duplicates()
+        #df=self.DataFrame
+        #print(df)
+        #df=df.applymap(tuple)
+        
+        #t1=time.time()
+        #df.drop_duplicates(subset=df.columns,keep='last',inplace=True)
+        #t2=time.time()
+        #print('datafrme took ', t2-t1)
+
+        #t1=time.time()
+        #unique,inds=np.unique(self._QN._hash,return_index=True)
+        #t2=time.time()
+        #print('np.unique took ', t2-t1)
+
+        #self._QN._data=self._QN._data[inds,:]
+        #temp=[self._tensors[k] for k in inds]
+        #self._tensors=temp
+        #self._QN.update_hashes()
+        
+        if len(self.tensors)!=len(self._QN):
+            raise ValueError("in SparseTensor.drop_duplicates(): len(self.tensors)={0} is different from len(self._QN)={1}: something went wrong here!".format(len(self.tensors),len(self._QN)))
+        return self
+    def view(self):
+        
+        """
+        returns an independent object SparseTensor that shares data with self. i.e., the tensor-blocks
+        of self and the returned object are the same things (the same stuff in memory). Modification of one 
+        also modifies the other. The exception to that is the DataFrame object df, which might be copied (I'm not sure
+        about it)
+        """
+        raise NotImplementedError
+        view=SparseTensor([],[],self.qflow,dtype=self._dtype,keytoq=self._ktoq,defval=self._dfval)
+        view._QN=self._QN.view()
+        
+
+    def flipflow(self):
+        """
+        flips the flow direction of all tensor legs in place;
+        """
+        self.qflow*=(-1)
+        return self
+    
+    def flippedflow(self):
+        """
+        returns the flipped flow direction of the tensor
+        """        
+        return self.qflow*(-1)
+    
+    @property
+    def shape(self):
+        """return a tuple of the tensor-dimension (similar to ndarray.shape)"""        
+        return self._shape()
+
+    def _shape(self):
+        """return a tuple of the tensor-dimension (similar to ndarray.shape)"""        
+        return tuple([self.dim(n) for n in range(self.rank)])
+
+    
+    def checkconsistency(self,verbose=0):
+        """ checks if the tensor blocks have consistent shapes; if shapes are inconsistent raises an error"""
+        df=self.DataFrame
+        try:
+            for leg in range(self.rank):
+                print()                                
+                print('leg ',leg)
+                try:
+                    for k,v in df.groupby(self.labels[leg],sort=False).groups.items():
+                        Ds=list(map(lambda x: np.shape(x)[leg],[self.tensors[index] for index in v.tolist()]))
+                        if not all(D==Ds[0] for D in Ds):
+                            raise ValueError("SparseTensor.checkconsistency found inconsistent block shapes for leg {0} and quantum number {1}".format(self.labels[leg],k))
+                except TypeError:
+                    df=df.applymap(tuple)
+                    for k,v in df.groupby(self.labels[leg],sort=False).groups.items():
+                        Ds=list(map(lambda x: np.shape(x)[leg],[self.tensors[index] for index in v.tolist()]))
+                        if not all(D==Ds[0] for D in Ds):
+                            raise ValueError("SparseTensor.checkconsistency found inconsistent block shapes for leg {0} and quantum number {1}".format(leg,k))
+            if df.shape[0]!=len(self.tensors):
+                raise ValueError("SparseTensor.checkconsistency(): number of tensor blocks is different from the number of rows in the dataframe")
+        except ValueError as error:
+            raise ValueError
+        else:
+            if verbose>0:
+                print('SparseTensor.checkconsistency: tensor is consistent')
+        return self
+    @property
+    def keytype(self):
+        return self._QN.dtype
+    
+    def dim(self,leg,from_labels=False):
+        
+        """
+        SparseTensor.dim(leg):
+        returns the total dimension of the tensor leg "leg"
+        """
+        return np.sum(self.blockdims(leg,from_labels)[1])
+
+    def blockdims(self,leg,from_labels=False):
+        """
+        SparseTensor.dim(leg):
+        returns: a tuple of two lists holding the quantum numbers and their block-dimensions
+                 [q1,a2,..,qN],[d1,d2,...,dN]
+                 such that quantum nuber q1 has dimension d1, and so on
+        leg (int or label in self.labels): leg for which to return the lists
+        from_labels (bool): if True, leg has to be a label name, if False; leg is the integer label of the tensor leg
+        """
+        if from_labels==False:
+            if not np.issubdtype(type(leg),np.dtype(int)):
+                raise TypeError("SparseTensor.blockdims(leg,from_labels=False): type(leg)={0} is not of integer type".format(type(leg)))
+            try:
+                return self.blockdimsFromInts(leg)
+            except ValueError:
+                raise ValueError("in SparseTensor.blockdims(leg): leg>self.rank ")
+
+        else:
+            try:
+                return self.blockdimsFromLabels(leg)
+            except ValueError:
+                raise ValueError("in SparseTensor.blockdims(leg): label {0} not found in SparseTensor.labels".format(leg))                
+        
+    def blockdimsFromLabels(self,leg):
+        """
+        SparseTensor.dim(leg):
+        returns: a tuple of two lists holding the quantum numbers and their block-dimensions
+                 [q1,a2,..,qN],[d1,d2,...,dN]
+                 such that quantum nuber q1 has dimension d1, and so on
+        leg (label in self.labels): leg for which to return the lists
+        """
+        if any([l==leg for l in self.labels]):
+            legind=np.nonzero(np.asarray(self.labels,dtype=object)==leg)[0][0]
+            l=[hash(np.asarray(q).tostring()) for q in self._QN._data[:,legind]]
+            unique,inds=np.unique(l,return_index=True)
+            return [self._QN._data[n,legind] for n in inds],[np.shape(self.tensors[n])[legind] for n in inds]
+        else:
+            raise ValueError("in SparseTensor.blockdimsFromLabels(leg): label {0} not found in SparseTensor.labels".format(leg))
+        
+    def blockdimsFromInts(self,leg):
+        """
+        SparseTensor.dim(leg):
+        returns: a tuple of two lists holding the quantum numbers and their block-dimensions
+                 [q1,a2,..,qN],[d1,d2,...,dN]
+                 such that quantum nuber q1 has dimension d1, and so on
+        leg (int): leg for which to return the lists
+        """
+        if leg>self.rank:
+            raise ValueError("in SparseTensor.blockdimsFromInts(leg): leg>self.rank ")
+        return self.blockdimsFromLabels(self.labels[leg])
+
+    
+    def charge(self,as_list=False):
+        """
+        SparseTensor.charge():
+        returns a list of the total charge of each block, i.e. the sum of its individual quantum numbers multiplied by its qflow; 
+        for a symmetric tensor, each charge has to be zero
+        return type: list of self.keytype
+        """
+
+        QN=self._QN._data*self.qflow
+        if not as_list:            
+            return [sum(QN[p,:]) for p in range(len(self))]
+        else:
+            try:
+                return list(map(list,[sum(QN[p,:]) for p in range(len(self))]))
+            except TypeError:
+                return list([sum(QN[p,:]) for p in range(len(self))])
+
+    def blockshapes(self):
+        """
+        returns a list with the shape of each block
+        """
+        return list(map(np.shape,self.tensors))
+
+    def getQN(self,n):
+        """
+        """
+        #df=pd.DataFrame.from_records(data=self._QN._data,columns=self.labels)
+        #return df.iloc[n,:].tolist()
+        return self._QN._data[n,:]        
+
+    def __len__(self):
+        return len(self.tensors)
+    
+    def randomize(self,scaling=0.5):
+        """
+        randomizes the tensor in place
+        """
+        for k in range(len(self)):
+            if np.issubdtype(self.dtype,np.dtype(float)):            
+                self._QN._blocks[k]=(np.random.random_sample(self._QN._blocks[k].shape)-0.5)*scaling
+            if np.issubdtype(self.dtype,np.dtype(complex)):                            
+                self._QN._blocks[k]=(np.random.random_sample(self._QN._blocks[k].shape)-0.5+1j*(np.random.random_sample(self._QN._blocks[k].shape)-0.5))*scaling
+
+    def insert(self,QN,block):
+        """
+        insert a quantum-number block pair (QN,block)
+        function checks if duplicate exists, if yes, it overwrites it.
+        QN can be either obtained from SparseTensor.getQN(n) (i.e. an np.ndarray of np.ndarrays of shape (rank,))
+        or it can be a list of lists
+        or it can be a list of np.ndarrays
+        or it can be a list of integers
+        """
+        if(len(QN)!=self.rank):
+            raise ValueError("SparseTensor.insert(QN,block): len(QN)!=self.rank")
+
+        #    k=QN[n]
+        #    if type(k)!=self._QN._data.dtype or not np.isscalar(k):
+        #        raise TypeError("in SparseTensor.insert(QN,block): type {0} for QN-key on leg {1} is different from previously found type {2}".format(type(k),n,self._QN._data.dtype))
+        #l=np.asarray([self._QN._data[n,:].tostring() for n in range(self._QN._data.shape[0])])
+        #if not isinstance(type(QN[0]),type(self._QN._data[0][0])):
+        #    raise TypeError("SparseTensor.inert(QN.block): type of QN-quantum numbers differs from the type in SparseTensor._QN")
+        if isinstance(QN,list):
+            if all(map(lambda x: isinstance(x,collections.Iterable),QN)):
+                QN_=np.empty(len(QN),dtype=object)
+                for n in range(len(QN)):                
+                    QN_[n]=np.asarray(QN[n]) 
+                inds=np.nonzero(self._QN._hash==hash(np.concatenate(QN_,axis=0).tostring()))[0]
+            else:#if all(map(np.isscalar,QN)):
+                QN_=np.asarray(QN)
+                inds=np.nonzero(self._QN._hash==hash(QN_.tostring()))[0]
+        elif isinstance(QN,np.ndarray):
+            if all(map(np.isscalar,QN)):
+                QN_=np.asarray(QN)
+                inds=np.nonzero(self._QN._hash==hash(QN_.tostring()))[0]
+            else:
+                QN_=np.empty(len(QN),dtype=object)
+                for n in range(len(QN)):                
+                    QN_[n]=np.asarray(QN[n]) 
+                inds=np.nonzero(self._QN._hash==hash(np.concatenate(QN_,axis=0).tostring()))[0]
+                #QN_=QN
+                #inds=np.nonzero(self._QN._hash==hash(np.concatenate(QN_,axis=0).tostring()))[0]
+        else:
+            raise TypeError("SparseTensor.insert(QN,block): QN has to be either of: 1) a list of lists, 2) a list of ints or 3) an np.ndarray of shape (rank,) holding np.ndarrays")
+
+        if inds.size>0:
+            self._QN._blocks[inds[0]]=block.astype(self.dtype)
+        else:
+            self._QN._data=np.append(self._QN._data,np.expand_dims(QN_,0),axis=0)
+            self._QN._blocks.append(block.astype(self.dtype))
+
+        self._QN.update_hashes()
+        
+    def __getitem__(self,ind):
+        """
+        SparseTensor__getitem__(ind):
+        ind: integer;
+        returns: ndarray; block at position ind
+        """
+        return self.tensors[ind]
+    
+
+    def __setitem__(self,QN,value):
+        """
+        insert a quantum-number block pair (QN,block)
+        """
+        self.insert(QN,value)
+        return self
+
+
+    def remove(self,n):
+        """
+        removes block "n" from the tensors and from the BookKeeper data
+        n: int
+           the index of the block to be removed
+        """
+        if n>len(self):
+            raise IndexError("SparseTensor.remove(n): n is out of bounds")
+        self._QN._blocks.pop(n)
+        self._QN._data=self._QN._data[np.nonzero(np.arange(len(self))!=n),:]
+        self._QN._hash=self._QN._hash[np.nonzero(np.arange(len(self))!=n)]
+
+    def squeeze(self,thresh=1E-14):
+        """
+        removes all blocks with a total norm smaller then thresh
+        """
+        inds=np.nonzero(np.fromiter(map(np.linalg.norm,self.tensors),dtype=np.float64)>thresh)[0]
+        self._QN._data=self._QN._data[inds,:]
+        temp=[self.tensors[k] for k in inds]
+        self.tensors=temp
+        self._QN.update_hashes()
+        return self
+    
+
+    def removeNonConserved(self):
+        """
+        removes all blocks with non-zero charge
+        """
+        charges=self.charge()
+        zero=charges[0]*0
+        inds=np.nonzero(list(map(lambda x: np.all(operator.__eq__(zero,x)), charges)))[0]
+        self._QN._data=self._QN._data[inds,:]
+        temp=[self.tensors[k] for k in inds]
+        self.tensors=temp
+        self._QN.update_hashes()
+        return self
+        
     #for use with print command
     def __str__(self):
-        for k in self._tensor.keys():
-            print 
-            print 
-            print (k)
-            print (self._tensor[k])
+        print('SparseTensor of length ',len(self.tensors))
+        for k in range(len(self)):
+            print ()
+            print ("###################")
+            print ()            
+            print ("Quantum Numbers: {0}, shape={1}".format(list(self._QN._data[k,:]),self.tensors[k].shape))
+            print ()
+            print ("Block")            
+            print (self.tensors[k])
         return ''
 
-    def __keys__(self):
-        return self._tensor.keys()
+    def blockmax(self):
+        """ 
+        blockmax():
+        returns a list of containing the maximum value of each block
+        """
+        return list(map(np.max,self.tensors))
     
-    def __blockmax__(self):
-        mx=dict()
-        for c in self.__keys__():
-            mx[c]=np.max(self[c])
-        return mx
+    def blocknorms(self):
+        """ 
+        blocknorms():
+        returns a list of containing the norms of each block
+        """
+        return list(map(np.linalg.norm,self.tensors))
     
-    def __blocknorms__(self):
-        norm=dict()
-        for c in self.__keys__():
-            norm[c]=np.linalg.norm(self[c])
-        return norm
-
-    def __norm__(self):
-        Z=list(snp.tensordot(self,snp.conj(self),(range(self._rank),range(self._rank)))._tensor.values())[0]
-        return np.sqrt(Z)
-    def __normalize__(self):
-        Z=list(snp.tensordot(self,snp.conj(self),(range(self._rank),range(self._rank)))._tensor.values())[0]
-        for k in self._tensor:
-            t=self._tensor[k]
-            self._tensor[k]=t/Z
-
-
-
-    #act on all blocks with "operation"
-    def __unary_operations__(self,operation,*args,**kwargs):
-        res=self.__copy__()
-        res._defval=operation(self._defval,*args,**kwargs)
-        if res._defval!=float(0.0) and res._defval!=complex(0.0):
-
-            warnings.warn('SparseTensor.__unary_operations__(self,operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
+    def norm(self):
+        """ 
+        norm():
+        return the L2 norm of the tensor
+        """
+        return np.sqrt(sum(map(lambda x: x**2, self.blocknorms())))
         
-        for k,t in self._tensor.items():
-            res._tensor[k]=operation(t,*args,**kwargs)
+    def normalize(self):
+        """ 
+        normalize():
+        normalize the tensor according to the L2 norm
+        """
+        Z=self.norm()
+        for T  in self.tensors:
+            T/=Z
+
+    def __in_place_unary_operations__(self,operation,*args,**kwargs):
+        
+        """
+        __in_place_unary_operations__(operation,*args,**kwargs):
+        act on all blocks with "operation" in place
+        """
+        self._defval=operation(self._defval,*args,**kwargs)
+        if (self._defval!=0.0) and (self._defval !=False):
+            warnings.warn('SparseTensor.__unary_operations__(operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
+        self._QN._blocks=list(map(lambda x: operation(x,*args,**kwargs),self.tensors))
+
+
+    def __unary_operations__(self,operation,*args,**kwargs):
+        """
+        __unary_operations__(operation,*args,**kwargs):
+        act on all blocks with "operation"
+        """
+        res=SparseTensor.empty_like(self)
+        res._defval=operation(self._defval,*args,**kwargs)
+        if (res._defval!=0.0) and (res._defval !=False):
+            warnings.warn('SparseTensor.__unary_operations__(operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
+        res._QN._blocks=list(map(lambda x: operation(x,*args,**kwargs),self.tensors))
         return res
     
-    #act with operation on all blocks of self._tensor and obj._tensor
-    #binary operatrions include multiplication with scalars, so a could be
-    #a number of a tensor. This functions is taken from Markus Haurus abeliantensor.py
-    #code
-    def __binary_operations__(self,a,operation,*args,**kwargs):
-        res=self.__copy__()
+    def __binary_operations__(self,other,operation,*args,**kwargs):
+
+        """
+        __binary_operations__(other,operation,*args,**kwargs):
+        act with "operation"(self[n],other) on all blocks 
+        binary operations include multiplication with scalars, so other could be
+        a scalar or a tensor. This functions is adapted from Markus Haurus abeliantensor.py
+        code
+        """
+        #checks:
+        if self.rank!=other.rank:
+            raise ValueError("__binary_operations__(other,operation,*args,**kwargs): self and other have different ranks; cannot perform operation")
+        res=SparseTensor([],[],self.qflow,dtype=self._dtype,keytoq=self._ktoq,defval=self._defval)        
         try:
-            if np.result_type(a._dtype,self._dtype)==np.float64:
-                res._dtype=float
-            elif np.result_type(a._dtype,self._dtype)==np.complex128:
-                res._dtype=complex
-            else:
-                sys.exit(' __binary_operations__(self,a,operation,*args,**kwargs): unknown dtype',np.result_type(a._dtype,self._dtype))
+            res._dtype=np.result_type(other.dtype,self.dtype)
         except AttributeError:
-            if np.result_type(a,self._dtype)==np.float64:
-                res._dtype=float
-            elif np.result_type(a,self._dtype)==np.complex128:
-                res._dtype=complex
-            else:
-                sys.exit(' __binary_operations__(self,a,operation,*args,**kwargs): unknown dtype',np.result_type(a._dtype,self._dtype))
+            res._dtype=np.result_type(other,self.dtype)
 
-        if isinstance(a,SparseTensor):
-            #do some checks:
-            if self._qflow!=a._qflow:
-                warnings.warn('SparseTensor.__binary_operations__(self,a,operation,*args,**kwargs): tensors have different qflow; using qflow of self',stacklevel=3)
-            if self._mergelevel!=a._mergelevel:
-                sys.exit('SparseTensor.__binary_operations__(self,a,operation,*args,**kwargs): tensors have different mergelevel') 
-
-            res._defval=operation(self._defval,a._defval,*args,**kwargs)
-            keys = set().union(self._tensor.keys(), a._tensor.keys())
-            if self._mergelevel==tuple(['A']*self._rank):
-                for k in keys:
-                    temp1 = self._tensor.get(k, self._defval)
-                    temp2 = a._tensor.get(k, a._defval)
-                    res[k]=operation(temp1, temp2, *args, **kwargs)
-                
-            elif self._mergelevel!=tuple(['A']*self._rank):
-                for k in keys:
-                    temp1 = self._tensor.get(k, self._defval)
-                    temp2 = a._tensor.get(k, a._defval)
-                    try:
-                        shape=self._shapes[k]
-                    except KeyError:
-                        try:
-                            shape=a._shapes[k]
-                        except KeyError:
-                            sys.exit('SparseTensor.__in_place_binary_operations(): KeyError')
-                    res.__insertmergedblock__(k,shape,operation(temp1, temp2, *args, **kwargs))
-
-        else:
-            res._defval = operation(self._defval,a,*args, **kwargs)
-            for k,v in self._tensor.items():
-                res._tensor[k] = operation(v, a, *args, **kwargs)
+        if isinstance(other,SparseTensor):
+            if np.all(self.qflow!=other.qflow):
+                warnings.warn('SparseTensor.__binary_operations__(other,operation,*args,**kwargs): tensors have different qflow; using qflow of self',stacklevel=3)
+            #if self and other have identical _QN, we can just go ahead and apply operation
+            #on each block without any checks
+            if np.all(self._QN._data==other._QN._data):
+                res._defval=operation(self._defval,other._defval,*args,**kwargs)
+                res._QN._data=np.copy(self._QN._data)
+                res._QN._hash=np.copy(self._QN._hash)
+                res._QN.rank=self._QN.rank
+                res._QN._labels=np.copy(self._QN.labels)
+                res._QN.dtype=self._QN.dtype
+                res._QN._blocks=list(map(fct.partial(operation,*args,**kwargs),self._QN._blocks,other.tensors))
+                #res._QN.update_hashes()
+                return res
             
-        if res._defval!=float(0.0) and res._defval!=complex(0.0) and res._defval!=True:
-            warnings.warn('SparseTensor.__binary_operations__(self,operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
-
-        return res
-
-
-    def __in_place_binary_operations__(self,a,operation,*args,**kwargs):
-        try:
-            if np.result_type(a._dtype,self._dtype)==np.float64:
-                self._dtype=float
-            elif np.result_type(a._dtype,self._dtype)==np.complex128:
-                self._dtype=complex
+            #if self and other have different _QN, we need to get the common keys, the keys only present
+            #in the left tensor and those only present in the right tensor
             else:
-                sys.exit(' __in_place_binary_operations__(self,a,operation,*args,**kwargs): unknown dtype',np.result_type(a._dtype,self._dtype))
-        except AttributeError:
-            if np.result_type(a,self._dtype)==np.float64:
-                self._dtype=float
-            elif np.result_type(a,self._dtype)==np.complex128:
-                self._dtype=complex
-            else:
-                sys.exit(' __in_place_binary_operations__(self,a,operation,*args,**kwargs): unknown dtype',np.result_type(a._dtype,self._dtype))
+                common=np.intersect1d(self._QN._hash,other._QN._hash)
 
-        if isinstance(a,SparseTensor):
-            #do some checks: mergelevels of a and self have to be identical
-            #print 'in binary-inplace add: ',self._qflow,a._qflow
-            if self._qflow!=a._qflow:
-                warnings.warn('SparseTensor.__binary_operations__(self,a,operation,*args,**kwargs): tensors have different qflow; using qflow of self',stacklevel=3)
-            if self._mergelevel!=a._mergelevel:
-                sys.exit('SparseTensor.__binary_operations__(self,a,operation,*args,**kwargs): tensors have different mergelevel') 
+                commonindself=[np.nonzero(self._QN._hash==c)[0][0] for c in common]
+                commonindother=[np.nonzero(other._QN._hash==c)[0][0] for c in common]
 
-            self._defval=operation(self._defval,a._defval,*args,**kwargs)
-            keys = set().union(self._tensor.keys(), a._tensor.keys())
+                self_only=np.setdiff1d(np.arange(len(self)), commonindself, assume_unique=True)
+                other_only=np.setdiff1d(np.arange(len(other)), commonindother, assume_unique=True)
 
-            if self._mergelevel==tuple(['A']*self._rank):
-                for k in keys:
-                    temp1 = self._tensor.get(k, self._defval)
-                    temp2 = a._tensor.get(k, a._defval)
-                    self[k]=operation(temp1, temp2, *args, **kwargs)
-                
-            elif self._mergelevel!=tuple(['A']*self._rank):
-                for k in keys:
-                    temp1 = self._tensor.get(k, self._defval)
-                    temp2 = a._tensor.get(k, a._defval)
-                    try:
-                        shape=self._shapes[k]
-                    except KeyError:
-                        try:
-                            shape=a._shapes[k]
-                        except KeyError:
-                            sys.exit('SparseTensor.__in_place_binary_operations(): KeyError')
-                    self.__insertmergedblock__(k,shape,operation(temp1, temp2, *args, **kwargs))
+                tc=[operation(self[x],other[y],*args,**kwargs) for x,y in zip(commonindself,commonindother)]
+                tl=[operation(self[x],other._defval,*args,**kwargs) for x in self_only]
+                tr=[operation(self._defval,other[y],*args,**kwargs) for y in other_only]
+                res._QN._data=np.concatenate((self._QN._data[commonindself,:],self._QN._data[self_only,:],other._QN._data[other_only,:]),axis=0)
+                res._QN._hash=np.concatenate((self._QN._hash[commonindself],self._QN._hash[self_only],other._QN._hash[other_only]),axis=0)
+                res._QN.rank=self.rank
+                res._QN._labels=self._QN.labels
+                res._QN.dtype=self._QN.dtype
+                res._QN._blocks=tc+tl+tr
+                return res
         else:
-            self._defval = operation(self._defval,a,*args, **kwargs)
-            for k,v in self._tensor.items():
-                self._tensor[k] = operation(v, a, *args, **kwargs)
-        if self._defval!=float(0.0) and self._defval!=complex(0.0) and self._defval!=True:
-            warnings.warn('SparseTensor.__in_place_binary_operations__(self,operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)            
+            res._defval = operation(self._defval,other,*args, **kwargs)
+            res._QN._blocks=list(map(fct.partial(operation,*args,**kwargs),self.tensors,other))
+            res._QN=copy.deepcopy(self._QN)
+            if (res._defval!=0.0) and (res._defval !=False):
+                warnings.warn('SparseTensor.__binary_operations__(self,operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
+            return res
 
-        return self
+
+    def __in_place_binary_operations__(self,other,operation,*args,**kwargs):
+
+        
+        """
+        __in_place_binary_operations__(other,operation,*args,**kwargs):
+        act with "operation"(self[n],other) on all blocks  in place
+        binary operations include multiplication with scalars, so other could be
+        a scalar or a tensor. This functions is adapted from Markus Haurus abeliantensor.py
+        code
+        """
+        #checks:
+        if self.rank!=other.rank:
+            raise ValueError("__binary_operations__(other,operation,*args,**kwargs): self and other have different ranks; cannot perform operation")
+        try:
+            self._dtype=np.result_type(other.dtype,self.dtype)
+        except AttributeError:
+            self._dtype=np.result_type(other,self.dtype)
+
+        if isinstance(other,SparseTensor):
+            if np.all(self.qflow!=other.qflow):
+                warnings.warn('SparseTensor.__binary_operations__(other,operation,*args,**kwargs): tensors have different qflow; using qflow of self',stacklevel=3)
+            #if self and other have identical _QN, we can just go ahead and apply operation
+            #on each block without any checks
+            if np.all(self._QN._data==other._QN._data):
+                self._defval=operation(self._defval,other._defval,*args,**kwargs)
+                self._QN._data=np.copy(self._QN._data)
+                self._QN._hash=np.copy(self._QN._hash)
+                self._QN.rank=self._QN.rank
+                self._QN._labels=np.copy(self._QN.labels)
+                self._QN.dtype=self._QN.dtype
+                self._QN._blocks=list(map(fct.partial(operation,*args,**kwargs),self._QN._blocks,other.tensors))
+                #self._QN.update_hashes()                
+                return self
+            
+            #if self and other have different _QN, we need to get the common keys, the keys only present
+            #in the left tensor and those only present in the right tensor
+            else:
+                common=np.intersect1d(self._QN._hash,other._QN._hash)
+                commonindself=[np.nonzero(self._QN._hash==c)[0][0] for c in common]
+                commonindother=[np.nonzero(other._QN._hash==c)[0][0] for c in common]
+
+                self_only=np.setdiff1d(np.arange(len(self)), commonindself, assume_unique=True)
+                other_only=np.setdiff1d(np.arange(len(other)), commonindother, assume_unique=True)
+
+                tc=[operation(self[x],other[y],*args,**kwargs) for x,y in zip(commonindself,commonindother)]
+                tl=[operation(self[x],other._defval,*args,**kwargs) for x in self_only]
+                tr=[operation(self._defval,other[y],*args,**kwargs) for y in other_only]
+                self._QN._data=np.concatenate((self._QN._data[commonindself,:],self._QN._data[self_only,:],other._QN._data[other_only,:]),axis=0)
+                self._QN._hash=np.concatenate((self._QN._hash[commonindself],self._QN._hash[self_only],other._QN._hash[other_only]),axis=0)
+                self._QN.rank=self.rank
+                self._QN._labels=self._QN.labels
+                self._QN.dtype=self._QN.dtype
+                self._QN._blocks=tc+tl+tr
+                return self
+        else:
+            self._defval = operation(self._defval,other,*args, **kwargs)
+            self._QN._blocks=list(map(fct.partial(operation,*args,**kwargs),self.tensors,other))            
+            self._QN=copy.deepcopy(self._QN)
+            if (self._defval!=0.0) and (self._defval !=False):
+                warnings.warn('SparseTensor.__binary_operations__(self,operation,*args,**kwargs) resulted in non-invariant tensor',stacklevel=3)
+            return res
+
     
     #from Markus Hauru's abeliantensor.py class
     def arg_swapper(op):
@@ -690,6 +1188,7 @@ class SparseTensor(object):
     __pos__ = generate_unary_deferer(opr.pos)
     __abs__ = generate_unary_deferer(abs)
     __invert__ = generate_unary_deferer(opr.invert)
+    
     def __div__(self, other):   # Python 2 compatibility
         return type(self).__truediv__(self, other)
     def __idiv__(self, other):   # Python 2 compatibility
@@ -697,198 +1196,172 @@ class SparseTensor(object):
     
     """
     returns a charge-diagonal identity matrix which can be contracted with "index".
-    "which" specifies which index should be contractable with self._tensor[index]
-    The eye._qflow on the first index is the flipped version of self._qflow[index]
-    
-
+    "which" specifies which index of eye should be contractable with self._tensor[index] (in terms of qflow)
+    The eye.qflow on the first index is the flipped version of self.qflow[index]
     """
-    def __eye__(self,index, which=0):
-        if which>1:
-            sys.exit('SparseTensor.__eye__(self,index={0},which={1}): which has be to be 0 or 1.'.format(index,which))
-        Ds=[copy.deepcopy(self._Ds[index]),copy.deepcopy(self._Ds[index])]
-        if which==0:
-            qflow=tuple([utils.flipsigns(self._qflow[index]),self._qflow[index]])
-        elif which==1:
-            qflow=tuple([self._qflow[index],utils.flipsigns(self._qflow[index])])
-            
-        mergelevel=tuple([self._mergelevel[index],self._mergelevel[index]])
-        keytoq=tuple([self._ktoq[index],self._ktoq[index]] )       
-        iden=SparseTensor(keys=[],values=[],Ds=Ds,qflow=qflow,keytoq=keytoq,mergelevel=mergelevel,dtype=self._dtype)
-        for k in self._Ds[index].keys():
-            key=tuple([k,k])
-            temp=self._Ds[index][k]
-            shape=tuple([temp,temp])
-            size=utils.prod(utils.flatten(temp))
-            iden.__insertmergedblock__(key,shape,np.eye(size).astype(self._dtype))
-            
-        return iden
-
-
-    #returns a random charge-diagonal matrix that can be contracted with "index"    
-    def __random__(self,index,which=0):
-        if which>1:
-            sys.exit('SparseTensor.__eye__(self,index={0},which={1}): which has be to be 0 or 1.'.format(index,which))
-        Ds=[copy.deepcopy(self._Ds[index]),copy.deepcopy(self._Ds[index])]
-        if which==0:
-            qflow=tuple([utils.flipsigns(self._qflow[index]),self._qflow[index]])
-        elif which==1:
-            qflow=tuple([self._qflow[index],utils.flipsigns(self._qflow[index])])
-        
-        mergelevel=tuple([self._mergelevel[index],self._mergelevel[index]])
-        keytoq=tuple([self._ktoq[index],self._ktoq[index]])               
-        iden=SparseTensor(keys=[],values=[],Ds=Ds,qflow=qflow,keytoq=keytoq,mergelevel=mergelevel,dtype=self._dtype)
-        for k in self._Ds[index].keys():
-            key=tuple([k,k])
-            temp=self._Ds[index][k]
-            shape=tuple([temp,temp])
-            size=utils.prod(utils.flatten(temp))
-            iden.__insertmergedblock__(key,shape,np.random.rand(size,size).astype(self._dtype))
-            
-        return iden
 
     #return a deep copy of self
-    def __copy__(self):
-        copy=SparseTensor(keys=[],values=[],Ds=self._Ds,qflow=self._qflow,keytoq=self._ktoq,mergelevel=self._mergelevel,\
-                          dtype=self._dtype)        
-        for k in self.__keys__():
-            copy._tensor[k]=np.copy(self[k])
-        #update keys makes sure that the tensor has consistent shapes
-        copy.__updatekeys__()
-        copy._shapes=copy.__shapes__()
-        return copy
+    def copy(self):
+        return copy.deepcopy(self)
 
-    """
-    upon conjugation, the flow-sign of the tensor is changed to minus its flowsign;
-    this is neccessary when using SparseTensor for DMRG
-    """
-    def __conjugate__(self,*args,**kwargs):
+
+    def conjugate(self,*args,**kwargs):
+        """
+        return the conjugate of self
+        upon conjugation, the flow-sign of the tensor is changed to minus its flowsign;
+        this is neccessary when using SparseTensor for DMRG
+        """
+        
         res=self.__unary_operations__(np.conj,*args,**kwargs)
-        res._qflow=utils.flipsigns(res._qflow)        
+        res.qflow*=(-1)
         return res
     
-    def __conj__(self,*args,**kwargs):
-        res=self.__unary_operations__(np.conj,*args,**kwargs)
-        res._qflow=utils.flipsigns(res._qflow)                
-        return res
+    def conj(self,*args,**kwargs):
+        """
+        in-place conjugation of self
+        upon conjugation, the flow-sign of the tensor is changed to minus its flowsign;
+        this is neccessary when using SparseTensor for DMRG
+        """
+        
+        self.__in_place_unary_operations__(np.conj,*args,**kwargs)
+        self.qflow*=(-1)
+        return self
     #take elementwise exp
-    def __exp__(self,*args,**kwargs):
+    def exp(self,*args,**kwargs):
         res=self.__unary_operations__(np.exp,*args,**kwargs)
         return res
         
     #take elementwise sqrt
-    def __sqrt__(self,*args,**kwargs):
+    def sqrt(self,*args,**kwargs):
         res=self.__unary_operations__(np.sqrt,*args,**kwargs)
         return res
 
-    def __real_(self,*args,**kwargs):
+    def real(self,*args,**kwargs):
         res=self.__unary_operations__(np.real,*args,**kwargs)
-        res._dtype=float        
+        res._dtype=np.dtype(float)
         return res
 
-    def __imag_(self,*args,**kwargs):
+    def imag(self,*args,**kwargs):
         res=self.__unary_operations__(np.imag,*args,**kwargs)
-        res._dtype=float        
+        res._dtype=np.dtype(float)
         return res
 
-    #transpose the tensor
-    def __transpose__(self,newinds):
-        if newinds==list(range(self._rank)):
-            return self.__copy__()
+
+    def T(self,*args):
+        """
+        def T(self,*args):
+        in-place transpose the tensor
+        args: empty, or a single list of the newindices
+              SparseTensor.T() reverses the index order
+              SparseTensor.T(newinds) sets index order to newinds
+        """
+
+        if len(args)>0:
+            newinds=args[0]
+            if np.all(np.sort(newinds)!=np.arange(self.rank)):
+                raise ValueError("SparseTensor.transpose(newinds): newinds has to be a permutation of {0}; got {1}".format(np.arange(self.rank)),newinds)
         else:
-            try: 
-                assert(len(newinds)==self._rank)
-                Ds=[dict() for n in range(self._rank)]
-                for n in range(len(newinds)):
-                    Ds[n]=copy.deepcopy(self._Ds[newinds[n]])
-                qflow=tuple([])
-                mergelevel=tuple([])
-                ktoq=tuple([])
-                for i1 in newinds:
-                    qflow+=tuple([self._qflow[i1]])
-                    mergelevel+=tuple([self._mergelevel[i1]])
-                    ktoq+=tuple([self._ktoq[i1]])
-            
-                result=SparseTensor(keys=[],values=[],Ds=Ds,qflow=qflow,keytoq=ktoq,mergelevel=mergelevel,dtype=self._dtype)
-                for key in self.__keys__():
-                    result._tensor[tuple([key[n] for n in newinds])]=np.transpose(self[key],newinds)
+            newinds=list(range(self.rank))[::-1]
+        self.labels=[self.labels[n] for n in newinds]
+        self.labelindices=[self.labelindices[n] for n in newinds]        
+        for n in range(len(self)):
+            self.tensors[n]=np.transpose(self.tensors[n],newinds)
+        return self
 
-                result.__updatekeys__()
-                result._shapes=result.__shapes__()
-                return result
-            except AssertionError:
-                sys.exit('ERROR in SparseTensor.py: transpose(tensor,newinds): len(newinds)!=tensor._rank')
 
-    def __trace__(self):
-        try:
-            assert(self._rank==2)
-        except AssertionError:
-            sys.exit('in SparseTensor.__trace__(self,tensor): self is not a rank 2 tensor')
-        tr=self._dtype(0.0)
-        for k in self.__keys__():
-            if k[0]!=k[1]:
-                continue
-            tr+=np.trace(self[k])
+    def transpose(self,*args):
+        """
+        def T(self,*args):
+        returns the transpose the tensor
+        args: empty, or a single list of the newindices
+              SparseTensor.T() reverses the index order
+              SparseTensor.T(newinds) sets index order to newinds
+        """
+
+        if len(args)>0:
+            newinds=args[0]
+            if np.all(np.sort(newinds)!=np.arange(self.rank)):
+                raise ValueError("SparseTensor.transpose(newinds): newinds has to be a permutation of {0}; got {1}".format(np.arange(self.rank)),newinds)
+        else:
+            newinds=list(range(self.rank))[::-1]
+
+        out=self.copy()
+        out.labels=[out.labels[n] for n in newinds]
+        out.labelindices=[out.labelindices[n] for n in newinds]        
+        for n in range(len(out)):
+            out.tensors[n]=np.transpose(out.tensors[n],newinds)
+        return out
+    
+    def trace(self):
+        if (self._defval!=0.0) or (self._defval!=False):
+            warnings.warn("SparseTensor.trace(): defval of tensor!=0.0; the defval is not included in the trace ")
+        tr=0.0
+        inds=np.nonzero([np.all(list(map(lambda x: np.all(x==self._QN._data[n,0]),self._QN._data[n,:]))) for n in range(len(self))])[0]
+        for i in inds:
+            T=self.tensors[i]
+            Dmin=np.min(T.shape)
+            for s in range(Dmin):
+                tr+=T[tuple([s]*self.rank)]
         return tr
-    #return the hermitian conjugate, if self is a matrix
-    def __herm__(self):
-        try:
-            assert(self._rank==2)
-        except AssertionError:
-            sys.exit('in SparseTensor.__herm__(self,tensor): self is not a rank 2 tensor')
-            
-        newinds=[1,0]
-        Ds=[dict() for n in range(self._rank)]
-        for n in range(len(newinds)):
-            Ds[n]=self._Ds[newinds[n]].copy()
-        qflow=tuple([])
-        mergelevel=tuple([])
-        ktoq=tuple([])        
-        for i1 in newinds:
-            qflow+=tuple([self._qflow[i1]])
-            mergelevel+=tuple([self._mergelevel[i1]])
-            ktoq=+tuple([self._ktoq[i1]])
-        result=SparseTensor(keys=[],values=[],Ds=Ds,qflow=qflow,keytoq=ktoq,mergelevel=mergelevel,dtype=self._dtype)
-        for key in self.__keys__():
-            result._tensor[tuple([key[n] for n in newinds])]=np.conj(np.transpose(self[key],newinds))
-        result.__updatekeys__()
-        return result
-                
-    def __tondarray__(self):
-        sizes=tuple([])
-        blocks=[dict() for n in range(self._rank)]
-        for n in range(self._rank):
-            s=0
-            start=0
-            for k in sorted(self._Ds[n].keys()):
-                blocks[n][k]=tuple([start,start+utils.prod(utils.flatten(self._Ds[n][k]))])
-                start+=utils.prod(utils.flatten(self._Ds[n][k]))
-                s+=utils.prod(utils.flatten(self._Ds[n][k]))
-            sizes+=tuple([s])
-        
-        full=np.zeros(sizes,dtype=self._dtype)
-        for k in self.__keys__():
-            b=tuple([])
-            for n in range(self._rank):
-                b+=tuple([slice(blocks[n][k[n]][0],blocks[n][k[n]][1],1)])
-            full[b]=self[k]
-        return full
 
-    def __fromndarray__(self,array):
-        sizes=tuple([])
-        blocks=[dict() for n in range(self._rank)]
-        for n in range(self._rank):
-            s=0
+    def herm(self,*args):
+        """
+        in-place hermitian conjuate of self
+        """
+        self.conj().T(*args)
+
+    def hermitian(self,*args):
+        """
+        returns the hermitian conjuate of self
+        """
+        return self.copy().conj().T(*args)
+
+                
+    def todense(self):
+        mapper=[dict() for s in range(self.rank)]
+        for r in range(self.rank):
+            Qs,Ds=self.blockdimsFromInts(r)
             start=0
-            for k in sorted(self._Ds[n].keys()):
-                blocks[n][k]=tuple([start,start+utils.prod(utils.flatten(self._Ds[n][k]))])
-                start+=utils.prod(utils.flatten(self._Ds[n][k]))
-                s+=utils.prod(utils.flatten(self._Ds[n][k]))
-            sizes+=tuple([s])
-            
-        for k in self.__keys__():
-            b=tuple([])
-            for n in range(self._rank):
-                b+=tuple([slice(blocks[n][k[n]][0],blocks[n][k[n]][1],1)])
-            self._tensor[k]=full[b]
-        
+            for n in range(len(Ds)):
+                q=Qs[n]
+                try:
+                    mapper[r][tuple(q)]=slice(start,start+Ds[n],1)
+                except TypeError:
+                    mapper[r][q]=slice(start,start+Ds[n],1)
+                start+=Ds[n]
+        dense=np.zeros(self.shape,dtype=self.dtype)
+        for n in range(len(self)):
+            try:            
+                slices=tuple([mapper[r][tuple(self._QN._data[n,r])] for r in range(self.rank)])
+                dense[slices]=self.tensors[n]                
+            except TypeError:
+                slices=tuple([mapper[r][self._QN._data[n,r]] for r in range(self.rank)])
+                dense[slices]=self.tensors[n]                
+        return dense
+
+    
+    def fromdense(self,array):
+        if np.any(np.asarray(array.shape)<np.asarray(self.shape)):
+            raise ValueError("SparseTensor.fromdense(array): array.shape is too small to enclose self.shape are not matching")
+        mapper=[dict() for s in range(self.rank)]
+        for r in range(self.rank):
+            Qs,Ds=self.blockdimsFromInts(r)
+            start=0
+            for n in range(len(Ds)):
+                q=Qs[n]
+                try:
+                    mapper[r][tuple(q)]=slice(start,start+Ds[n],1)
+                except TypeError:
+                    mapper[r][q]=slice(start,start+Ds[n],1)
+                start+=Ds[n]
+        dense=np.zeros(self.shape,dtype=self.dtype)
+        for n in range(len(self)):
+            try:            
+                slices=tuple([mapper[r][tuple(self._QN._data[n,r])] for r in range(self.rank)])
+                self.tensors[n]=dense[slices]
+            except TypeError:
+                slices=tuple([mapper[r][self._QN._data[n,r]] for r in range(self.rank)])
+                self.tensors[n]=dense[slices]
+        return dense
+
 

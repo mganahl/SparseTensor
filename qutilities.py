@@ -1,29 +1,37 @@
 #!/usr/bin/env python
 import numpy as np
 import sys
-import itertools
+import itertools,operator
 herm=lambda x:np.conj(np.transpose(x))
 
-def getKeyShapePairs(n,indices,keylist,shapelist,key,shape):
+def getKeyShapePairs(n,indices,keylist,shapelist,key,shape,conserve=True):
+
     if n<len(indices)-1:
-        for q in indices[n]._Q:
+        for index in range(len(indices[n])):
             if n==0:
                 key=[None]*len(indices)
                 shape=[None]*len(indices)
-            key[n]=q
-            shape[n]=indices[n]._Q[q]
-            getKeyShapePairs(n+1,indices,keylist,shapelist,key,shape)
+            key[n],shape[n]=indices[n][index,0],indices[n][index,1]
+            getKeyShapePairs(n+1,indices,keylist,shapelist,key,shape,conserve)
     else:
-        Q=key[0]*indices[0]._flow
-        for p in range(1,len(indices)-1):
-            Q+=(key[p]*indices[p]._flow)
-        if Q*(-indices[n]._flow) in indices[n]._Q:
-            key[n]=Q*(-indices[n]._flow)
-            shape[n]=indices[n]._Q[Q*(-indices[n]._flow)]
+        if conserve==True:
+            Q=key[0]*indices[0]._flow
+            for p in range(1,len(indices)-1):
+                Q+=(key[p]*indices[p]._flow)
+            mask=[np.all([indices[n][m,0]==Q]) for m in range(len(indices[n]))]
+            if any(mask):
+                ind=np.nonzero(mask)[0][0]            
+                key[n]=Q*(-indices[n]._flow)
+                shape[n]=indices[n][ind,1]
+                keylist.append(np.copy(key))
+                shapelist.append(tuple(shape))
+        else:
+            for index in range(len(indices[n])):            
+                key[n],shape[n]=indices[n][index,0],indices[n][index,1]
+                keylist.append(np.copy(key))
+                shapelist.append(tuple(shape))
 
-            keylist.append(tuple(key))
-            shapelist.append(tuple(shape))            
-
+            
 def tupmult(t1,t2):
     assert(len(t1)==len(t2))
     mul=t1
