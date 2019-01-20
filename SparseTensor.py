@@ -56,6 +56,9 @@ def addColumns(df,*x):
 class BookKeeper:
     """
     BookKeeper class handles th ebook-keeping of the quantum number blocks
+    Attributes:
+    self._labels: a list of str labelling the tensor-legs
+    self._indices: a list of int labeling the tensor legs by numbers
     """
 
     def __init__(self,keys,blocks,labels,rank):
@@ -119,6 +122,9 @@ class BookKeeper:
     
     @property
     def labels(self):
+        """
+        return a list of the str labels of the tensor legs
+        """
         return self._labels
     @labels.setter
     def labels(self,labellist):
@@ -127,6 +133,9 @@ class BookKeeper:
 
     @property
     def labelindices(self):
+        """
+        return a list containing the integer-labels of the tensor legs
+        """
         return self._indices
     @labelindices.setter
     def labelindices(self,indexlist):
@@ -577,11 +586,12 @@ class SparseTensor(object):
                 self.drop_duplicates()
             self.qflow=np.asarray(qflow)
 
-       
+
+            
     def Index(self,leg,from_labels=False):
         """
         Index(leg,from_labels=False):
-        returns an TensorIndex object corresponding to leg "leg" of the SparseTensor
+        returns a TensorIndex object corresponding to leg "leg" of the SparseTensor
         leg (int, or element in SparseTensor.labels if from_labels=True): the leg for which the TensorIndex object should be constructed
         """
         
@@ -629,6 +639,9 @@ class SparseTensor(object):
     
     @property
     def defval(self):
+        """
+        return the default value of the SparseTensor
+        """
         return self._defval
     @property
     def ktoq(self):
@@ -636,6 +649,9 @@ class SparseTensor(object):
     
     @property
     def DataFrame(self):
+        """
+        return a pandas dataframe containing the quantum number blocks of the mps
+        """
         return pd.DataFrame.from_records(data=self._QN._data,columns=self._QN.labels)
     
     @property
@@ -673,8 +689,8 @@ class SparseTensor(object):
         if len(self.tensors)!=len(self._QN):
             raise ValueError("in SparseTensor.drop_duplicates(): len(self.tensors)={0} is different from len(self._QN)={1}: something went wrong here!".format(len(self.tensors),len(self._QN)))
         return self
+    
     def view(self):
-        
         """
         returns an independent object SparseTensor that shares data with self. i.e., the tensor-blocks
         of self and the returned object are the same things (the same stuff in memory). Modification of one 
@@ -685,7 +701,6 @@ class SparseTensor(object):
         view=SparseTensor([],[],self.qflow,dtype=self._dtype,keytoq=self._ktoq,defval=self._dfval)
         view._QN=self._QN.view()
         
-
     def flipflow(self):
         """
         flips the flow direction of all tensor legs in place;
@@ -701,16 +716,23 @@ class SparseTensor(object):
     
     @property
     def shape(self):
-        """return a tuple of the tensor-dimension (similar to ndarray.shape)"""        
+        """
+        return a tuple of the tensor-dimension (similar to ndarray.shape)
+        """        
         return self._shape()
 
     def _shape(self):
-        """return a tuple of the tensor-dimension (similar to ndarray.shape)"""        
+        """
+        return a tuple of the tensor-dimension (similar to ndarray.shape)
+        """        
         return tuple([self.dim(n) for n in range(self.rank)])
 
     
     def checkconsistency(self,verbose=0):
-        """ checks if the tensor blocks have consistent shapes; if shapes are inconsistent raises an error"""
+        """ 
+        checks if the tensor blocks have consistent shapes; if shapes are inconsistent raises a ValueError
+        
+        """
         df=self.DataFrame
         try:
             for leg in range(self.rank):
@@ -788,7 +810,6 @@ class SparseTensor(object):
         
     def blockdimsFromInts(self,leg):
         """
-        SparseTensor.dim(leg):
         returns: a tuple of two lists holding the quantum numbers and their block-dimensions
                  [q1,a2,..,qN],[d1,d2,...,dN]
                  such that quantum nuber q1 has dimension d1, and so on
@@ -1078,7 +1099,6 @@ class SparseTensor(object):
 
     def __in_place_binary_operations__(self,other,operation,*args,**kwargs):
 
-        
         """
         __in_place_binary_operations__(other,operation,*args,**kwargs):
         act with "operation"(self[n],other) on all blocks  in place
@@ -1194,14 +1214,11 @@ class SparseTensor(object):
     def __idiv__(self, other):   # Python 2 compatibility
         return type(self).__itruediv__(self, other)
     
-    """
-    returns a charge-diagonal identity matrix which can be contracted with "index".
-    "which" specifies which index of eye should be contractable with self._tensor[index] (in terms of qflow)
-    The eye.qflow on the first index is the flipped version of self.qflow[index]
-    """
 
-    #return a deep copy of self
     def copy(self):
+        """
+        return a copy of self
+        """
         return copy.deepcopy(self)
 
 

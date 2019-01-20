@@ -58,7 +58,8 @@ class TensorInitTests(unittest.TestCase):
         
     def test_random(self):
         ten=spt.SparseTensor.random(self.I)
-   
+        print(ten.blockshape)
+        input()
     def test_zeros(self):
         ten=spt.SparseTensor.zeros(self.I)
         for t in ten.tensors:
